@@ -1,0 +1,1 @@
+ALTER TABLE "store_content" ALTER COLUMN "embedding" SET NOT NULL;
