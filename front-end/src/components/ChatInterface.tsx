@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm';
 import { motion } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import { runSocialAgent } from '../lib/api';
+import { AppHeader } from './AppHeader';
 import clsx from 'clsx';
 
 interface Message {
@@ -93,12 +94,7 @@ export function ChatInterface() {
   return (
     <div className="flex flex-col h-screen bg-gray-50 text-gray-900 font-sans">
       {/* Header */}
-      <header className="bg-white border-b border-gray-100 px-6 py-4 flex items-center justify-between sticky top-0 z-10 shadow-sm">
-        <div className="flex items-center gap-2 text-primary">
-          <Sparkles className="w-6 h-6" />
-          <h1 className="text-xl font-semibold tracking-tight text-gray-900">SocialAgent</h1>
-        </div>
-      </header>
+      <AppHeader />
 
       <div className="flex-1 flex overflow-hidden">
         {/* Sidebar / Configuration Panel */}

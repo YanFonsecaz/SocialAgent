@@ -15,6 +15,13 @@
       "when": 1771193585621,
       "tag": "0001_wild_callisto",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1771359071293,
+      "tag": "0002_powerful_zeigeist",
+      "breakpoints": true
     }
   ]
 }

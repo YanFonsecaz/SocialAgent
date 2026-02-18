@@ -1,5 +1,6 @@
 import { Elysia } from "elysia";
 import { socialAgentRoutes } from "./routes/social-agent";
+import { strategistInlinks } from "./routes/strategist-inlinks";
 import { envValid } from "../envSchema";
 
 import { cors } from "@elysiajs/cors";
@@ -13,7 +14,8 @@ const app = new Elysia()
       ],
     }),
   )
-  .use(socialAgentRoutes);
+  .use(socialAgentRoutes)
+  .use(strategistInlinks);
 
 app.listen(3333, () => {
   console.log("Server started on http://localhost:3333");
