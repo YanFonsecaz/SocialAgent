@@ -454,7 +454,7 @@ export function StrategistInlinks() {
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="w-full mx-auto space-y-6 px-2 sm:px-4 lg:px-6 2xl:px-8"
+                className="w-full max-w-none 2xl:max-w-[1400px] mx-auto space-y-6 px-2 md:px-4"
               >
                 {/* Summary Cards */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

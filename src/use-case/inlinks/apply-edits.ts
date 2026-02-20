@@ -10,6 +10,10 @@ export type BlockEdit = {
   overwriteBlock: boolean;
 };
 
+type MarkdownSegment =
+  | { kind: "text"; value: string }
+  | { kind: "link"; text: string; url: string };
+
 export type ApplyEditsInput = {
   /**
    * HTML fragment produced by Readability (article.content) or equivalent.
@@ -72,16 +76,49 @@ const escapeHtml = (value: string): string =>
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 
+const parseMarkdownSegments = (markdown: string): MarkdownSegment[] => {
+  const segments: MarkdownSegment[] = [];
+  const re = /\[([^\]]+)\]\(([^)]+)\)/g;
+
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = re.exec(markdown)) !== null) {
+    const start = match.index;
+    const full = match[0] ?? "";
+    const text = match[1] ?? "";
+    const url = match[2] ?? "";
+
+    if (start > lastIndex) {
+      segments.push({ kind: "text", value: markdown.slice(lastIndex, start) });
+    }
+
+    segments.push({ kind: "link", text, url });
+
+    lastIndex = start + full.length;
+  }
+
+  if (lastIndex < markdown.length) {
+    segments.push({ kind: "text", value: markdown.slice(lastIndex) });
+  }
+
+  return segments;
+};
+
 const markdownLinkToHtml = (markdown: string): string => {
   // Converts [text](url) to <a href="url">text</a> (target blank + rel).
   // Leaves other text as-is.
-  return markdown.replace(
-    /\[([^\]]+)\]\(([^)]+)\)/g,
-    (_m, text: string, url: string) =>
-      `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(
-        text,
-      )}</a>`,
-  );
+  const segments = parseMarkdownSegments(markdown);
+
+  return segments
+    .map((s) => {
+      if (s.kind === "text") return escapeHtml(s.value);
+
+      return `<a href="${escapeHtml(
+        s.url,
+      )}" target="_blank" rel="noopener noreferrer">${escapeHtml(s.text)}</a>`;
+    })
+    .join("");
 };
 
 const tokenize = (value: string): string[] =>
@@ -131,30 +168,59 @@ const highlightDiffWordsToHtml = (input: {
   modifiedMarkdown: string;
 }): string => {
   const originalTokens = tokenize(input.originalText);
-  const modifiedTokens = tokenize(input.modifiedMarkdown);
 
   const highlightAll =
     originalTokens.length === 0 ||
     normalizeWhitespace(input.originalText) === "[Trecho novo]";
 
+  // Parse markdown into atomic segments so link syntax never leaks into HTML.
+  const segments = parseMarkdownSegments(input.modifiedMarkdown);
+
+  // Tokenize only the plain text parts + the link text parts, but keep the link as a single segment.
+  const flatTokens: Array<
+    | { kind: "text-token"; value: string }
+    | { kind: "link"; text: string; url: string }
+  > = [];
+
+  for (const s of segments) {
+    if (s.kind === "text") {
+      const tokens = tokenize(s.value);
+      for (const t of tokens) flatTokens.push({ kind: "text-token", value: t });
+    } else {
+      flatTokens.push({ kind: "link", text: s.text, url: s.url });
+    }
+  }
+
+  const modifiedTokensForDiff = flatTokens.map((t) =>
+    t.kind === "text-token" ? t.value : t.text,
+  );
+
   const unchangedMask = highlightAll
-    ? new Array<boolean>(modifiedTokens.length).fill(false)
-    : lcsUnchangedMask(originalTokens, modifiedTokens);
+    ? new Array<boolean>(modifiedTokensForDiff.length).fill(false)
+    : lcsUnchangedMask(originalTokens, modifiedTokensForDiff);
 
-  const marked = modifiedTokens
-    .map((t, idx) =>
-      highlightAll || !unchangedMask[idx]
-        ? `[[H]]${escapeHtml(t)}[[/H]]`
-        : escapeHtml(t),
-    )
-    .join(" ");
+  const parts = flatTokens.map((t, idx) => {
+    const shouldHighlight = highlightAll || !unchangedMask[idx];
 
-  // Convert markdown link(s) to <a> and then wrap highlighted tokens with <mark>
-  const withLinks = markdownLinkToHtml(marked);
+    if (t.kind === "text-token") {
+      const safe = escapeHtml(t.value);
+      return shouldHighlight
+        ? `<mark class="inlink-highlight-modified">${safe}</mark>`
+        : safe;
+    }
 
-  return withLinks
-    .replace(/\[\[H\]\]/g, '<mark class="inlink-highlight-modified">')
-    .replace(/\[\[\/H\]\]/g, "</mark>");
+    // Link is treated atomically; highlight only the anchor text, not markdown syntax.
+    const linkHtml = `<a href="${escapeHtml(
+      t.url,
+    )}" target="_blank" rel="noopener noreferrer">${escapeHtml(t.text)}</a>`;
+
+    return shouldHighlight
+      ? `<mark class="inlink-highlight-modified">${linkHtml}</mark>`
+      : linkHtml;
+  });
+
+  // Re-join with spaces between tokens (this matches the previous token-join behavior).
+  return parts.join(" ");
 };
 
 const highlightLinkedWordsToHtml = (markdown: string): string => {
