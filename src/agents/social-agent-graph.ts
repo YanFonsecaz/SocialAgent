@@ -20,6 +20,8 @@ type SocialAgentInput = {
   intent?: string;
   query?: string;
   tone?: string;
+  feedback?: string;
+  previousResponse?: string;
 };
 
 const AgentState = Annotation.Root({
@@ -28,6 +30,8 @@ const AgentState = Annotation.Root({
   intentNormalized: Annotation<z.infer<typeof IntentSchema> | undefined>(),
   query: Annotation<string | undefined>(),
   tone: Annotation<string | undefined>(),
+  feedback: Annotation<string | undefined>(),
+  previousResponse: Annotation<string | undefined>(),
   content: Annotation<string | undefined>(),
   response: Annotation<string | undefined>(),
   sources: Annotation<string[] | undefined>(),
@@ -112,8 +116,12 @@ const buildGenerationPrompt = (input: {
   intent: z.infer<typeof IntentSchema>;
   context: string;
   tone?: string;
+  feedback?: string;
+  previousResponse?: string;
 }) => {
   const tone = input.tone ?? "profissional, claro e direto";
+  const feedback = input.feedback?.trim() || "Nenhum";
+  const previousResponse = input.previousResponse?.trim() || "Nenhuma";
 
   const formatMap: Record<z.infer<typeof IntentSchema>, string> = {
     linkedin_text:
@@ -134,11 +142,14 @@ const buildGenerationPrompt = (input: {
     "Você é um especialista em criação de conteúdo.",
     `Formato: ${formatMap[input.intent]}`,
     `Tom: ${tone}`,
+    `Feedback do usuário: ${feedback}`,
+    `Resposta anterior: ${previousResponse}`,
     "",
     "Regras:",
     "- Use apenas informações do contexto.",
     "- Não invente fatos.",
     "- Seja objetivo e claro.",
+    "- Se houver feedback, ajuste o texto conforme solicitado e evite repetir a resposta anterior.",
     "",
     "Contexto:",
     input.context,
@@ -146,7 +157,7 @@ const buildGenerationPrompt = (input: {
 };
 
 const extractNode = async (state: SocialAgentState) => {
-  const { url, intent, query, tone } = state;
+  const { url, intent, query, tone, feedback, previousResponse } = state;
   const normalized = normalizeIntent(intent);
 
   const result = await extractContentTool.invoke({ url });
@@ -156,6 +167,8 @@ const extractNode = async (state: SocialAgentState) => {
     intentNormalized: normalized,
     query,
     tone,
+    feedback,
+    previousResponse,
   };
 };
 
@@ -182,6 +195,8 @@ const generateNode = async (state: SocialAgentState) => {
     intent,
     context,
     tone: state.tone,
+    feedback: state.feedback,
+    previousResponse: state.previousResponse,
   });
 
   const response = await llm.invoke([
@@ -216,5 +231,7 @@ export const runSocialAgent = async (
     intent: input.intent,
     query: input.query,
     tone: input.tone,
+    feedback: input.feedback,
+    previousResponse: input.previousResponse,
   });
 };

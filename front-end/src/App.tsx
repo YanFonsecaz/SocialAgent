@@ -1,6 +1,7 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import { ChatInterface } from './components/ChatInterface';
-import { StrategistInlinks } from './components/StrategistInlinks';
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { ChatInterface } from "./components/ChatInterface";
+import { StrategistInlinks } from "./components/StrategistInlinks";
+import { TrendsMaster } from "./components/TrendsMaster";
 
 /** App principal com roteamento entre Social Agent e Strategist Inlinks. */
 function App() {
@@ -9,6 +10,7 @@ function App() {
       <Routes>
         <Route path="/" element={<ChatInterface />} />
         <Route path="/strategist" element={<StrategistInlinks />} />
+        <Route path="/trends-master" element={<TrendsMaster />} />
       </Routes>
     </BrowserRouter>
   );

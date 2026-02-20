@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "bun --watch src/http/server.ts",
     "build": "bun build src/http/server.ts --target bun --outdir ./dist",
+    "build:front": "bun run --cwd front-end build",
+    "build:all": "bun run build:front && bun run build",
     "start": "NODE_ENV=production bun dist/http/server.ts",
+    "start:prod": "bun run build:all && bun run start",
     "test": "bun test"
   },
   "devDependencies": {
@@ -31,6 +34,8 @@
     "drizzle-orm": "^0.45.1",
     "elysia": "^1.4.25",
     "jsdom": "^28.1.0",
+    "marked": "^12.0.2",
+    "nodemailer": "^6.9.15",
     "openai": "^6.21.0",
     "pg": "^8.18.0",
     "postgres": "^3.4.8",

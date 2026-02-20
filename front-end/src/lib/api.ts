@@ -5,6 +5,8 @@ export interface SocialAgentRequest {
   intent?: string;
   query?: string;
   tone?: string;
+  feedback?: string;
+  previousResponse?: string;
 }
 
 export interface SocialAgentResponse {
@@ -127,6 +129,104 @@ export async function runStrategistInlinks(
 ): Promise<StrategistInlinksResponse> {
   const response = await fetch("http://localhost:3333/strategist/inlinks", {
     method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Error: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+// ---- Trends Master API ----
+
+export interface TrendsConfig {
+  sector: string;
+  periods: Array<"diario" | "semanal" | "mensal">;
+  topN: number;
+  risingN: number;
+  maxArticles: number;
+  customTopics?: string[];
+  emailEnabled: boolean;
+  emailRecipients: string[];
+  emailMode?: string;
+  emailApiProvider?: string;
+}
+
+export interface TrendsReport {
+  sector: string;
+  generatedAt: string | Date;
+  periods: Array<{
+    label: string;
+    periodo: "diario" | "semanal" | "mensal";
+    trends: Array<{
+      keyword: string;
+      type: "top" | "rising";
+      score?: number | string;
+    }>;
+    news: Array<{
+      keyword: string;
+      articles: Array<{
+        title: string;
+        link: string;
+        source: string;
+        date: string;
+        snippet?: string;
+        thumbnail?: string;
+      }>;
+    }>;
+  }>;
+  summary: string;
+  markdown: string;
+}
+
+export interface TrendsRunResponse {
+  success: boolean;
+  report?: TrendsReport;
+  error?: string;
+  details?: unknown;
+}
+
+export async function runTrendsMaster(
+  data: TrendsConfig,
+): Promise<TrendsRunResponse> {
+  const response = await fetch("http://localhost:3333/api/trends-master/run", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Error: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+export async function getTrendsMasterConfig(): Promise<{
+  success: boolean;
+  config: TrendsConfig;
+}> {
+  const response = await fetch("http://localhost:3333/api/trends-master/config");
+
+  if (!response.ok) {
+    throw new Error(`Error: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+export async function updateTrendsMasterConfig(
+  data: TrendsConfig,
+): Promise<{ success: boolean; error?: string }> {
+  const response = await fetch("http://localhost:3333/api/trends-master/config", {
+    method: "PUT",
     headers: {
       "Content-Type": "application/json",
     },

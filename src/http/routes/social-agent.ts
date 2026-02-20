@@ -5,7 +5,7 @@ import { z } from "zod";
 export const socialAgentRoutes = new Elysia().post(
   "/social-agent",
   async ({ body }) => {
-    const { url, intent, query, tone } = body;
+    const { url, intent, query, tone, feedback, previousResponse } = body;
 
     try {
       const result: Awaited<ReturnType<typeof runSocialAgent>> =
@@ -14,6 +14,8 @@ export const socialAgentRoutes = new Elysia().post(
           intent: intent || undefined,
           query: query || undefined,
           tone: tone || undefined,
+          feedback: feedback || undefined,
+          previousResponse: previousResponse || undefined,
         });
 
       console.log("Agent result success");
@@ -31,8 +33,6 @@ export const socialAgentRoutes = new Elysia().post(
         },
       );
     }
-
-
   },
   {
     body: z.object({
@@ -40,6 +40,8 @@ export const socialAgentRoutes = new Elysia().post(
       intent: z.string().optional(),
       query: z.string().optional(),
       tone: z.string().optional(),
+      feedback: z.string().optional(),
+      previousResponse: z.string().optional(),
     }),
   },
 );
