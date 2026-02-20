@@ -6,6 +6,15 @@ import {
   TrendsPeriod,
 } from "../types";
 
+const TREND_TYPE_LABEL: Record<string, string> = {
+  top: "Mais populares",
+  rising: "Em crescimento",
+};
+
+function formatTrendType(type: string): string {
+  return TREND_TYPE_LABEL[type] ?? type;
+}
+
 const WEEKDAYS = [
   "Domingo",
   "Segunda",
@@ -36,7 +45,7 @@ function formatPeriodTable(
   sector: string,
   trends: TrendItem[],
   news: NewsResult[],
-  now: Date
+  now: Date,
 ): string {
   const hora = now.toLocaleTimeString("pt-BR", {
     hour: "2-digit",
@@ -48,14 +57,14 @@ function formatPeriodTable(
   const lines: string[] = [];
   lines.push(`#### ${sector} - Análise (${coleta} - ${hora})\n`);
   lines.push(
-    "| Palavra-chave | Tipo | Título | Fonte | Link | Data/Hora | Dia | Resumo |"
+    "| Palavra-chave | Tipo | Título | Fonte | Link | Data/Hora | Dia | Resumo |",
   );
   lines.push("|---|---|---|---|---|---|---|---|");
 
   const typeByKeyword = new Map<string, string>();
   for (const trend of trends) {
     if (trend.keyword) {
-      typeByKeyword.set(trend.keyword, trend.type || "top");
+      typeByKeyword.set(trend.keyword, formatTrendType(trend.type || "top"));
     }
   }
 
@@ -70,8 +79,8 @@ function formatPeriodTable(
     if (articles.length === 0) {
       lines.push(
         `| ${safeMd(keyword)} | ${safeMd(
-          type
-        )} | — | — | — | ${hora} | ${diaSemana} | — |`
+          type,
+        )} | — | — | — | ${hora} | ${diaSemana} | — |`,
       );
       continue;
     }
@@ -85,10 +94,10 @@ function formatPeriodTable(
 
       lines.push(
         `| ${safeMd(keyword)} | ${safeMd(type)} | ${safeMd(
-          title
+          title,
         )} | ${safeMd(source)} | ${safeMd(link)} | ${safeMd(
-          date
-        )} | ${diaSemana} | ${safeMd(resumo)} |`
+          date,
+        )} | ${diaSemana} | ${safeMd(resumo)} |`,
       );
     }
   }
@@ -104,7 +113,7 @@ function formatPeriodTable(
 export function generateReport(
   sector: string,
   periodsData: PeriodData[],
-  summary: string
+  summary: string,
 ): string {
   const now = new Date();
   const dataFormatada = now.toLocaleDateString("pt-BR");
@@ -131,7 +140,7 @@ export function generateReport(
 export function createReport(
   sector: string,
   periodsData: PeriodData[],
-  summary: string
+  summary: string,
 ): TrendsReport {
   return {
     sector,
