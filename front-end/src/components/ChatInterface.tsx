@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import {
   Send,
   Globe,
@@ -7,6 +7,7 @@ import {
   User,
   Bot,
   AlertCircle,
+  HelpCircle,
 } from "lucide-react";
 import remarkGfm from "remark-gfm";
 import { motion } from "framer-motion";
@@ -14,6 +15,8 @@ import ReactMarkdown from "react-markdown";
 import { runSocialAgent } from "../lib/api";
 import { AppHeader } from "./AppHeader";
 import clsx from "clsx";
+import { HelpModal } from "./HelpModal";
+import helpMarkdownRaw from "../docs/user/social-agent.md";
 
 interface Message {
   id: string;
@@ -42,7 +45,16 @@ export function ChatInterface() {
   const [isLoading, setIsLoading] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const helpMarkdown = useMemo(
+    () =>
+      typeof helpMarkdownRaw === "string"
+        ? helpMarkdownRaw
+        : String(helpMarkdownRaw),
+    [],
+  );
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -166,9 +178,21 @@ export function ChatInterface() {
         {/* Sidebar / Configuration Panel */}
         <aside className="w-80 bg-white border-r border-gray-100 p-6 flex flex-col gap-6 overflow-y-auto hidden md:flex">
           <div>
-            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4">
-              Configuração
-            </h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">
+                Configuração
+              </h2>
+
+              <button
+                type="button"
+                onClick={() => setIsHelpOpen(true)}
+                className="text-xs text-gray-600 hover:text-gray-800 flex items-center gap-1"
+                title="Ajuda"
+              >
+                <HelpCircle className="w-3.5 h-3.5" />
+                Ajuda
+              </button>
+            </div>
 
             <form
               id="config-form"
@@ -462,6 +486,13 @@ export function ChatInterface() {
               Configurar & Gerar
             </button>
           </div>
+
+          <HelpModal
+            open={isHelpOpen}
+            title="Ajuda — Social Agent"
+            markdown={helpMarkdown}
+            onClose={() => setIsHelpOpen(false)}
+          />
         </main>
       </div>
     </div>

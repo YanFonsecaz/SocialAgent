@@ -9,6 +9,7 @@ import {
   Mail,
   Tag,
   BarChart3,
+  HelpCircle,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import ReactMarkdown from "react-markdown";
@@ -22,6 +23,8 @@ import {
   type TrendsReport,
 } from "../lib/api";
 import { AppHeader } from "./AppHeader";
+import { HelpModal } from "./HelpModal";
+import helpMarkdownRaw from "../docs/user/trends-master.md";
 
 const PERIOD_OPTIONS: Array<{
   value: "diario" | "semanal" | "mensal";
@@ -51,6 +54,15 @@ export function TrendsMaster() {
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<TrendsReport | null>(null);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
+
+  const helpMarkdown = useMemo(
+    () =>
+      typeof helpMarkdownRaw === "string"
+        ? helpMarkdownRaw
+        : String(helpMarkdownRaw),
+    [],
+  );
 
   const customTopicsText = useMemo(
     () => (config.customTopics || []).join("\n"),
@@ -136,14 +148,26 @@ export function TrendsMaster() {
             <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">
               Trends Master
             </h2>
-            <button
-              type="button"
-              onClick={handleLoadConfig}
-              className="text-xs text-primary flex items-center gap-1"
-            >
-              <RefreshCcw className="w-3.5 h-3.5" />
-              Recarregar
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setIsHelpOpen(true)}
+                className="text-xs text-gray-600 hover:text-gray-800 flex items-center gap-1"
+                title="Ajuda"
+              >
+                <HelpCircle className="w-3.5 h-3.5" />
+                Ajuda
+              </button>
+
+              <button
+                type="button"
+                onClick={handleLoadConfig}
+                className="text-xs text-primary flex items-center gap-1"
+              >
+                <RefreshCcw className="w-3.5 h-3.5" />
+                Recarregar
+              </button>
+            </div>
           </div>
 
           <form onSubmit={handleRun} className="flex flex-col gap-4">
@@ -423,6 +447,13 @@ export function TrendsMaster() {
               </div>
             </div>
           )}
+
+          <HelpModal
+            open={isHelpOpen}
+            title="Ajuda — Trends Master"
+            markdown={helpMarkdown}
+            onClose={() => setIsHelpOpen(false)}
+          />
         </main>
       </div>
     </div>

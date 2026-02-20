@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   Link2,
   Globe,
@@ -9,15 +9,15 @@ import {
   AlertCircle,
   ChevronDown,
   ChevronUp,
+  HelpCircle,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import clsx from "clsx";
 import DOMPurify from "dompurify";
-import {
-  runStrategistInlinks,
-  type StrategistInlinksResponse,
-} from "../lib/api";
+import { runStrategistInlinks, type StrategistInlinksResponse } from "../lib/api";
 import { AppHeader } from "./AppHeader";
+import { HelpModal } from "./HelpModal";
+import helpMarkdownRaw from "../docs/user/strategist-inlinks.md";
 
 /** Página de análise de inlinks: permite enviar URL principal + URLs satélites para identificar oportunidades de linking interno. */
 export function StrategistInlinks() {
@@ -28,6 +28,15 @@ export function StrategistInlinks() {
   const [result, setResult] = useState<StrategistInlinksResponse | null>(null);
   const [showRejected, setShowRejected] = useState(false);
   const [showDiffModal, setShowDiffModal] = useState(false);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
+
+  const helpMarkdown = useMemo(
+    () =>
+      typeof helpMarkdownRaw === "string"
+        ? helpMarkdownRaw
+        : String(helpMarkdownRaw),
+    [],
+  );
 
   /** Extrai URLs válidas do texto do textarea (uma por linha). */
   const parseUrls = (text: string): string[] => {
@@ -58,9 +67,7 @@ export function StrategistInlinks() {
       setResult(response);
     } catch (err) {
       console.error(err);
-      setError(
-        "Falha ao analisar inlinks. Verifique se o backend está rodando.",
-      );
+      setError("Falha ao analisar inlinks. Verifique se o backend está rodando.");
     } finally {
       setIsLoading(false);
     }
@@ -128,10 +135,7 @@ export function StrategistInlinks() {
     const normalizeForSearch = (value: string) =>
       value.replace(/\u00a0/g, " ").toLowerCase();
 
-    const applyHighlight = (
-      anchor: string,
-      replacementHtml: string,
-    ): boolean => {
+    const applyHighlight = (anchor: string, replacementHtml: string): boolean => {
       const walker = doc.createTreeWalker(root, nodeFilter.SHOW_TEXT);
       let node = walker.nextNode();
 
@@ -200,9 +204,21 @@ export function StrategistInlinks() {
         {/* Sidebar */}
         <aside className="w-96 bg-white border-r border-gray-100 p-6 flex flex-col gap-6 overflow-y-auto hidden md:flex">
           <div>
-            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4">
-              Configuração
-            </h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">
+                Configuração
+              </h2>
+
+              <button
+                type="button"
+                onClick={() => setIsHelpOpen(true)}
+                className="text-xs text-gray-600 hover:text-gray-800 flex items-center gap-1"
+                title="Ajuda"
+              >
+                <HelpCircle className="w-3.5 h-3.5" />
+                Ajuda
+              </button>
+            </div>
 
             <form
               id="strategist-form"
@@ -308,9 +324,9 @@ export function StrategistInlinks() {
                 Como funciona
               </h3>
               <p className="text-xs text-orange-700 leading-relaxed">
-                Informe a URL principal (destino dos links) e as URLs satélites.
-                A IA analisará cada satélite para encontrar oportunidades de
-                linking interno, sugerindo âncoras e frases.
+                Informe a URL principal (destino dos links) e as URLs satélites. A
+                IA analisará cada satélite para encontrar oportunidades de linking
+                interno, sugerindo âncoras e frases.
               </p>
             </div>
           </div>
@@ -570,9 +586,7 @@ export function StrategistInlinks() {
                           <button
                             type="button"
                             onClick={() =>
-                              navigator.clipboard.writeText(
-                                result.linkedContent,
-                              )
+                              navigator.clipboard.writeText(result.linkedContent)
                             }
                             className="text-xs font-medium text-primary hover:underline"
                           >
@@ -758,6 +772,12 @@ export function StrategistInlinks() {
               </motion.div>
             )}
           </div>
+          <HelpModal
+            open={isHelpOpen}
+            title="Ajuda — Strategist Inlinks"
+            markdown={helpMarkdown}
+            onClose={() => setIsHelpOpen(false)}
+          />
         </main>
       </div>
     </div>
