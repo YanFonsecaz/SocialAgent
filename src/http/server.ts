@@ -6,7 +6,8 @@ import { envValid } from "../envSchema";
 
 import { cors } from "@elysiajs/cors";
 
-const frontendDist = new URL("../../front-end/dist/", import.meta.url);
+const frontendDistPath = `${process.cwd()}/front-end/dist/`;
+const frontendDist = new URL(`file://${frontendDistPath}`);
 const indexHtml = Bun.file(new URL("index.html", frontendDist));
 
 const app = new Elysia()
