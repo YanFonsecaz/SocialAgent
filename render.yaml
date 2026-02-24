@@ -1,0 +1,47 @@
+services:
+  - type: web
+    name: socialagent
+    env: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    autoDeploy: true
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3333"
+
+      # Database (set this in Render to your Render Postgres Internal URL)
+      - key: DATABASE_URL
+        sync: false
+
+      # Required by the app
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: SERPAPI_API_KEY
+        sync: false
+
+      # Optional
+      - key: CORS_ORIGIN
+        sync: false
+
+      # Optional email settings
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: EMAIL_SUBJECT
+        sync: false
+      - key: EMAIL_PROVIDER_API_KEY
+        sync: false
+      - key: EMAIL_API_PROVIDER
+        sync: false
