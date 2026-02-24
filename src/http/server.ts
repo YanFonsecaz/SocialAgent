@@ -3,6 +3,8 @@ import { socialAgentRoutes } from "./routes/social-agent";
 import { strategistInlinks } from "./routes/strategist-inlinks";
 import { trendsMasterRoutes } from "./routes/trends-master";
 import { envValid } from "../envSchema";
+import { db } from "../db/connection";
+import { sql } from "drizzle-orm";
 
 import { cors } from "@elysiajs/cors";
 
@@ -51,6 +53,18 @@ const app = new Elysia()
     .use(socialAgentRoutes)
     .use(strategistInlinks)
     .use(trendsMasterRoutes)
+    .get("/health/db", async () => {
+        try {
+            await db.execute(sql`select 1`);
+            return { ok: true };
+        } catch (error) {
+            console.error("[Health] DB unavailable:", error);
+            return new Response(
+                JSON.stringify({ ok: false, error: "DB_UNAVAILABLE" }),
+                { status: 500, headers: { "Content-Type": "application/json" } },
+            );
+        }
+    })
     .get("/", () => indexHtml)
     .get("/assets/*", async ({ request }) => {
         const { pathname } = new URL(request.url);
