@@ -2,6 +2,28 @@ import * as cheerio from "cheerio";
 import { JSDOM } from "jsdom";
 import { Readability } from "@mozilla/readability";
 
+const isProduction = (): boolean => {
+    return (process.env.NODE_ENV ?? "").toLowerCase() === "production";
+};
+
+const stripToCheerioText = (html: string): string => {
+    const $ = cheerio.load(html);
+    $(
+        "script,style,noscript, iframe,svg,img,video,audio,footer,header,nav,aside",
+    ).remove();
+    return $("body").text().replace(/\s+/g, " ").trim();
+};
+
+const stripToCheerioBodyHtml = (html: string): string => {
+    const $ = cheerio.load(html);
+    $(
+        "script,style,noscript, iframe,svg,img,video,audio,footer,header,nav,aside",
+    ).remove();
+
+    const bodyHtml = $("body").html();
+    return bodyHtml?.trim() ?? "";
+};
+
 const createReadabilityDom = (html: string, urlContent: string): JSDOM => {
     // Avoid executing scripts and avoid pulling in external resources.
     // Note: In jsdom, `resources` must be undefined, "usable", or an object.
@@ -37,30 +59,33 @@ export const extractTextFromHtml = async (
 
         const html = await response.text();
 
-        // First attempt: Use Readability (no external resources)
-        const dom = createReadabilityDom(html, urlContent);
-        // @ts-ignore
-        const reader = new Readability(dom.window.document);
-        const article = reader.parse();
-
-        if (
-            article &&
-            article.textContent &&
-            article.textContent.trim().length > 100
-        ) {
-            return article.textContent.replace(/\s+/g, " ").trim();
+        // In production, prefer Cheerio-only to avoid jsdom/cssom crashes in some runtimes.
+        if (isProduction()) {
+            return stripToCheerioText(html);
         }
 
-        console.warn(
-            "Readability failed or returned insufficient content. Falling back to Cheerio.",
-        );
+        // Dev/local: try Readability first, but never let it crash the request.
+        try {
+            const dom = createReadabilityDom(html, urlContent);
+            // @ts-ignore
+            const reader = new Readability(dom.window.document);
+            const article = reader.parse();
 
-        // Fallback: Cheerio (Basic)
-        const $ = cheerio.load(html);
-        $(
-            "script,style,noscript, iframe,svg,img,video,audio,footer,header,nav,aside",
-        ).remove();
-        return $("body").text().replace(/\s+/g, " ").trim();
+            if (
+                article &&
+                article.textContent &&
+                article.textContent.trim().length > 100
+            ) {
+                return article.textContent.replace(/\s+/g, " ").trim();
+            }
+        } catch (error) {
+            console.warn(
+                "Readability/JSDOM crashed. Falling back to Cheerio.",
+                error,
+            );
+        }
+
+        return stripToCheerioText(html);
     } finally {
         clearTimeout(timeoutId);
     }
@@ -88,28 +113,33 @@ export const extractHtmlFromUrl = async (urlContent: string): Promise<string> =>
 
         const html = await response.text();
 
-        // First attempt: Use Readability (keeps structure, no external resources)
-        const dom = createReadabilityDom(html, urlContent);
-        // @ts-ignore
-        const reader = new Readability(dom.window.document);
-        const article = reader.parse();
-
-        if (article && article.content && article.content.trim().length > 50) {
-            return article.content.trim();
+        // In production, prefer Cheerio-only to avoid jsdom/cssom crashes in some runtimes.
+        if (isProduction()) {
+            return stripToCheerioBodyHtml(html);
         }
 
-        console.warn(
-            "Readability failed or returned insufficient HTML. Falling back to Cheerio.",
-        );
+        // Dev/local: try Readability first, but never let it crash the request.
+        try {
+            const dom = createReadabilityDom(html, urlContent);
+            // @ts-ignore
+            const reader = new Readability(dom.window.document);
+            const article = reader.parse();
 
-        // Fallback: Cheerio (Basic)
-        const $ = cheerio.load(html);
-        $(
-            "script,style,noscript, iframe,svg,img,video,audio,footer,header,nav,aside",
-        ).remove();
+            if (
+                article &&
+                article.content &&
+                article.content.trim().length > 50
+            ) {
+                return article.content.trim();
+            }
+        } catch (error) {
+            console.warn(
+                "Readability/JSDOM crashed. Falling back to Cheerio.",
+                error,
+            );
+        }
 
-        const bodyHtml = $("body").html();
-        return bodyHtml?.trim() ?? "";
+        return stripToCheerioBodyHtml(html);
     } finally {
         clearTimeout(timeoutId);
     }
