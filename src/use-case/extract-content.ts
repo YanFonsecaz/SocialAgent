@@ -3,13 +3,13 @@ import { JSDOM } from "jsdom";
 import { Readability } from "@mozilla/readability";
 
 const createReadabilityDom = (html: string, urlContent: string): JSDOM => {
-    // Avoid loading any external resources (CSS/images/etc) which can trigger CSSOM parsing
-    // and crash in some runtimes/bundled environments.
+    // Avoid executing scripts and avoid pulling in external resources.
+    // Note: In jsdom, `resources` must be undefined, "usable", or an object.
+    // Leaving it undefined prevents resource loading behavior that can trigger CSSOM parsing.
     return new JSDOM(html, {
         url: urlContent,
         pretendToBeVisual: false,
-        resources: "none",
-        runScripts: "dangerously",
+        runScripts: "outside-only",
     });
 };
 
