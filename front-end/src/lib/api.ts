@@ -1,241 +1,247 @@
 // ---- Social Agent API ----
+//
+// In production, the frontend is served by the same server as the API.
+// Use same-origin relative URLs to avoid CORS/preflight issues.
+const API_BASE_URL = "";
+
+// ---- Social Agent API ----
 
 export interface SocialAgentRequest {
-  url: string;
-  intent?: string;
-  query?: string;
-  tone?: string;
-  feedback?: string;
-  previousResponse?: string;
+    url: string;
+    intent?: string;
+    query?: string;
+    tone?: string;
+    feedback?: string;
+    previousResponse?: string;
 }
 
 export interface SocialAgentResponse {
-  response: string;
-  sources: string[];
+    response: string;
+    sources: string[];
 }
 
 /** Envia a URL para o Social Agent e retorna o conteúdo gerado. */
 export async function runSocialAgent(
-  data: SocialAgentRequest,
+    data: SocialAgentRequest,
 ): Promise<SocialAgentResponse> {
-  const response = await fetch("http://localhost:3333/social-agent", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(data),
-  });
+    const response = await fetch(`${API_BASE_URL}/social-agent`, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify(data),
+    });
 
-  if (!response.ok) {
-    throw new Error(`Error: ${response.statusText}`);
-  }
+    if (!response.ok) {
+        throw new Error(`Error: ${response.statusText}`);
+    }
 
-  return response.json();
+    return response.json();
 }
 
 // ---- Strategist Inlinks API ----
 
 export interface StrategistInlinksRequest {
-  urlPrincipal: string;
-  urlsAnalise: string[];
+    urlPrincipal: string;
+    urlsAnalise: string[];
 }
 
 export interface SelectedInlink {
-  url: string;
-  sentence: string;
-  anchor: string;
+    url: string;
+    sentence: string;
+    anchor: string;
 }
 
 export interface RejectedInlink {
-  url: string;
-  reason: string;
-  score?: number;
+    url: string;
+    reason: string;
+    score?: number;
 }
 
 export interface LlmChangeReportItem {
-  targetUrl: string;
-  anchor: string;
-  originalSentence: string;
-  modifiedSentence: string;
-  positionIndex?: number;
-  insertionStrategy?: "inline" | "semantic-paragraph" | "append" | "block";
-  insertionContext?: string;
-  justification: string;
-  metrics?: { relevance: number; authority: number };
+    targetUrl: string;
+    anchor: string;
+    originalSentence: string;
+    modifiedSentence: string;
+    positionIndex?: number;
+    insertionStrategy?: "inline" | "semantic-paragraph" | "append" | "block";
+    insertionContext?: string;
+    justification: string;
+    metrics?: { relevance: number; authority: number };
 }
 
 export interface InlinksBlock {
-  id: string;
-  type: "heading" | "paragraph" | "list_item" | "blockquote" | "code" | "other";
-  tag: string;
-  text: string;
-  html: string;
-  path: string;
-  containsLink: boolean;
-  charStart: number;
-  charEnd: number;
+    id: string;
+    type: "heading" | "paragraph" | "list_item" | "blockquote" | "code" | "other";
+    tag: string;
+    text: string;
+    html: string;
+    path: string;
+    containsLink: boolean;
+    charStart: number;
+    charEnd: number;
 }
 
 export interface BlockEdit {
-  blockId: string;
-  targetUrl: string;
-  anchor: string;
-  originalBlockText: string;
-  modifiedBlockText: string;
-  overwriteBlock: boolean;
-  justification: string;
-  metrics?: { relevance: number; authority: number };
-  skippedReason?:
-    | "already_linked"
-    | "no_valid_block"
-    | "density_limit"
-    | "duplicate";
+    blockId: string;
+    targetUrl: string;
+    anchor: string;
+    originalBlockText: string;
+    modifiedBlockText: string;
+    overwriteBlock: boolean;
+    justification: string;
+    metrics?: { relevance: number; authority: number };
+    skippedReason?:
+        | "already_linked"
+        | "no_valid_block"
+        | "density_limit"
+        | "duplicate";
 }
 
 export interface ApplyEditsStats {
-  totalEdits: number;
-  appliedLinked: number;
-  appliedModified: number;
-  skippedAlreadyLinked: number;
-  skippedBlockNotFound: number;
+    totalEdits: number;
+    appliedLinked: number;
+    appliedModified: number;
+    skippedAlreadyLinked: number;
+    skippedBlockNotFound: number;
 }
 
 export interface StrategistInlinksResponse {
-  message: string;
-  principalUrl: string;
-  totalAnalise: number;
-  totalSelecionadas: number;
-  selecionadas: SelectedInlink[];
-  rejeitadas: RejectedInlink[];
-  totalPersistidas: number;
+    message: string;
+    principalUrl: string;
+    totalAnalise: number;
+    totalSelecionadas: number;
+    selecionadas: SelectedInlink[];
+    rejeitadas: RejectedInlink[];
+    totalPersistidas: number;
 
-  // New block-based contract (for debugging/UX)
-  blocks?: InlinksBlock[];
-  edits?: BlockEdit[];
-  applied?: ApplyEditsStats;
+    // New block-based contract (for debugging/UX)
+    blocks?: InlinksBlock[];
+    edits?: BlockEdit[];
+    applied?: ApplyEditsStats;
 
-  // Diff modal (kept for current UI)
-  report: LlmChangeReportItem[];
+    // Diff modal (kept for current UI)
+    report: LlmChangeReportItem[];
 
-  // 3-column HTML payloads
-  modifiedContent: string;
-  originalContent: string;
-  linkedContent: string;
+    // 3-column HTML payloads
+    modifiedContent: string;
+    originalContent: string;
+    linkedContent: string;
 }
 
 /** Envia URLs para análise de inlinks e retorna as oportunidades encontradas. */
 export async function runStrategistInlinks(
-  data: StrategistInlinksRequest,
+    data: StrategistInlinksRequest,
 ): Promise<StrategistInlinksResponse> {
-  const response = await fetch("http://localhost:3333/strategist/inlinks", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(data),
-  });
+    const response = await fetch(`${API_BASE_URL}/strategist/inlinks`, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify(data),
+    });
 
-  if (!response.ok) {
-    throw new Error(`Error: ${response.statusText}`);
-  }
+    if (!response.ok) {
+        throw new Error(`Error: ${response.statusText}`);
+    }
 
-  return response.json();
+    return response.json();
 }
 
 // ---- Trends Master API ----
 
 export interface TrendsConfig {
-  sector: string;
-  periods: Array<"diario" | "semanal" | "mensal">;
-  topN: number;
-  risingN: number;
-  maxArticles: number;
-  customTopics?: string[];
-  emailEnabled: boolean;
-  emailRecipients: string[];
-  emailMode?: string;
-  emailApiProvider?: string;
+    sector: string;
+    periods: Array<"diario" | "semanal" | "mensal">;
+    topN: number;
+    risingN: number;
+    maxArticles: number;
+    customTopics?: string[];
+    emailEnabled: boolean;
+    emailRecipients: string[];
+    emailMode?: string;
+    emailApiProvider?: string;
 }
 
 export interface TrendsReport {
-  sector: string;
-  generatedAt: string | Date;
-  periods: Array<{
-    label: string;
-    periodo: "diario" | "semanal" | "mensal";
-    trends: Array<{
-      keyword: string;
-      type: "top" | "rising";
-      score?: number | string;
+    sector: string;
+    generatedAt: string | Date;
+    periods: Array<{
+        label: string;
+        periodo: "diario" | "semanal" | "mensal";
+        trends: Array<{
+            keyword: string;
+            type: "top" | "rising";
+            score?: number | string;
+        }>;
+        news: Array<{
+            keyword: string;
+            articles: Array<{
+                title: string;
+                link: string;
+                source: string;
+                date: string;
+                snippet?: string;
+                thumbnail?: string;
+            }>;
+        }>;
     }>;
-    news: Array<{
-      keyword: string;
-      articles: Array<{
-        title: string;
-        link: string;
-        source: string;
-        date: string;
-        snippet?: string;
-        thumbnail?: string;
-      }>;
-    }>;
-  }>;
-  summary: string;
-  markdown: string;
+    summary: string;
+    markdown: string;
 }
 
 export interface TrendsRunResponse {
-  success: boolean;
-  report?: TrendsReport;
-  error?: string;
-  details?: unknown;
+    success: boolean;
+    report?: TrendsReport;
+    error?: string;
+    details?: unknown;
 }
 
 export async function runTrendsMaster(
-  data: TrendsConfig,
+    data: TrendsConfig,
 ): Promise<TrendsRunResponse> {
-  const response = await fetch("http://localhost:3333/api/trends-master/run", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(data),
-  });
+    const response = await fetch(`${API_BASE_URL}/api/trends-master/run`, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify(data),
+    });
 
-  if (!response.ok) {
-    throw new Error(`Error: ${response.statusText}`);
-  }
+    if (!response.ok) {
+        throw new Error(`Error: ${response.statusText}`);
+    }
 
-  return response.json();
+    return response.json();
 }
 
 export async function getTrendsMasterConfig(): Promise<{
-  success: boolean;
-  config: TrendsConfig;
+    success: boolean;
+    config: TrendsConfig;
 }> {
-  const response = await fetch("http://localhost:3333/api/trends-master/config");
+    const response = await fetch(`${API_BASE_URL}/api/trends-master/config`);
 
-  if (!response.ok) {
-    throw new Error(`Error: ${response.statusText}`);
-  }
+    if (!response.ok) {
+        throw new Error(`Error: ${response.statusText}`);
+    }
 
-  return response.json();
+    return response.json();
 }
 
 export async function updateTrendsMasterConfig(
-  data: TrendsConfig,
+    data: TrendsConfig,
 ): Promise<{ success: boolean; error?: string }> {
-  const response = await fetch("http://localhost:3333/api/trends-master/config", {
-    method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(data),
-  });
+    const response = await fetch(`${API_BASE_URL}/api/trends-master/config`, {
+        method: "PUT",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify(data),
+    });
 
-  if (!response.ok) {
-    throw new Error(`Error: ${response.statusText}`);
-  }
+    if (!response.ok) {
+        throw new Error(`Error: ${response.statusText}`);
+    }
 
-  return response.json();
+    return response.json();
 }
