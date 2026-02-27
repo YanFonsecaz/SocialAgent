@@ -1,0 +1,29 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: socialagent_postgres_dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: social_agent
+    ports:
+      # Host:Container
+      - "5433:5432"
+    volumes:
+      - socialagent_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d social_agent"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    # Optional: tweak performance for local dev (safe defaults)
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=256MB"
+      - "-c"
+      - "max_connections=200"
+
+volumes:
+  socialagent_pgdata: {}

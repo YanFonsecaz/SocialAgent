@@ -1,10 +1,16 @@
 # dependencies (bun install)
 node_modules
+front-end/node_modules
 
 # output
 out
 dist
 *.tgz
+
+# front-end build output (Vite)
+front-end/dist
+front-end/dist-ssr
+front-end/.vite
 
 # code coverage
 coverage
@@ -12,23 +18,47 @@ coverage
 
 # logs
 logs
-_.log
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # dotenv environment variable files
 .env
-.env.development.local
-.env.test.local
-.env.production.local
-.env.local
+.env.*
+*.env
+*.env.*
 
 # caches
 .eslintcache
 .cache
 *.tsbuildinfo
+.bun
+.bun-cache
 
-# IntelliJ based IDEs
+# Editor / IDE
 .idea
+.vscode
+*.swp
+*.swo
+*.swn
+*.orig
+.history
 
-# Finder (MacOS) folder config
+# OS files
 .DS_Store
+
+# Secrets / keys (prevent accidental commits)
+*.pem
+*.key
+*.p12
+*.crt
+id_rsa
+id_ed25519
+
+# Local DB / dumps (if created during dev)
+*.sqlite
+*.sqlite3
+*.dump
