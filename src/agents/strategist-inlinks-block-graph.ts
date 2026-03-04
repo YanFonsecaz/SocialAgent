@@ -2,13 +2,24 @@ import { z } from "zod";
 import { ChatOpenAI } from "@langchain/openai";
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
 import { embedBatch, embedText } from "../use-case/embeddings";
-import { extractTextFromHtml } from "../use-case/extract-content";
+import {
+    extractTextFromHtml,
+    extractMetadataFromUrl,
+} from "../use-case/extract-content";
 import {
     DEFAULT_INTRO_BLOCKS_TO_SKIP,
     isEarlyStageGettingStarted,
     isLaterStageOrPrereqHeavy,
     anchorContainsDistinctiveToken,
 } from "../use-case/inlinks/heuristics";
+
+type AnchorHint = {
+    anchor: string;
+    /** Topic tokens derived from destination slug (normalized). */
+    slugTopicTokens?: string[];
+    /** How the hint was generated (useful for debugging/telemetry). */
+    source: "slug_topic";
+};
 
 /**
  * Block-based Strategist Inlinks Graph
@@ -156,6 +167,13 @@ const AgentState = Annotation.Root({
         default: () => [],
     }),
 
+    analysisMetas: Annotation<
+        Array<{ url: string; title?: string; h1?: string; canonicalUrl?: string }>
+    >({
+        reducer: (a, b) => a.concat(b),
+        default: () => [],
+    }),
+
     scoredCandidates: Annotation<CandidateItem[]>({
         reducer: (a, b) => a.concat(b),
         default: () => [],
@@ -228,6 +246,52 @@ const fetchMany = async (urls: string[], concurrency = 5): Promise<string[]> => 
     return results;
 };
 
+const fetchManyMetadata = async (
+    urls: string[],
+    concurrency = 5,
+): Promise<
+    Array<{ url: string; title?: string; h1?: string; canonicalUrl?: string }>
+> => {
+    const results: Array<{
+        url: string;
+        title?: string;
+        h1?: string;
+        canonicalUrl?: string;
+    }> = new Array(urls.length);
+    let cursor = 0;
+
+    const workers = Array.from({ length: concurrency }).map(async () => {
+        while (cursor < urls.length) {
+            const index = cursor++;
+            const url = urls[index];
+            if (!url) {
+                results[index] = { url: "" };
+                continue;
+            }
+
+            try {
+                const meta = await extractMetadataFromUrl(url);
+                results[index] = {
+                    url,
+                    title: meta.title,
+                    h1: meta.h1,
+                    canonicalUrl: meta.canonicalUrl,
+                };
+            } catch (err) {
+                console.warn(
+                    "Falha ao extrair metadados da URL candidata:",
+                    url,
+                    err,
+                );
+                results[index] = { url };
+            }
+        }
+    });
+
+    await Promise.all(workers);
+    return results;
+};
+
 const extractPrincipalNode = async (state: StrategistInlinksBlockState) => {
     // Prefer blocks if provided
     if (state.principalBlocks && state.principalBlocks.length > 0) {
@@ -253,7 +317,8 @@ const extractPrincipalNode = async (state: StrategistInlinksBlockState) => {
 
 const extractCandidatesNode = async (state: StrategistInlinksBlockState) => {
     const contents = await fetchMany(state.analysisUrls, 5);
-    return { analysisContents: contents };
+    const metas = await fetchManyMetadata(state.analysisUrls, 5);
+    return { analysisContents: contents, analysisMetas: metas };
 };
 
 const scoreCandidatesNode = async (state: StrategistInlinksBlockState) => {
@@ -313,6 +378,256 @@ const computeMaxLinks = (content: string, explicit?: number): number => {
     return Math.max(2, Math.ceil((wc / 1000) * 4));
 };
 
+const BLOCK_RERANK_TOP_K = 12;
+const MAX_BLOCK_EMBEDDINGS = 200;
+
+const rerankBlocksByEmbeddings = async (input: {
+    candidateContent: string;
+    blocks: PrincipalBlock[];
+    topK: number;
+    maxBlocks: number;
+}): Promise<Array<{ block: PrincipalBlock; score: number }>> => {
+    const topK = Math.max(1, Math.floor(input.topK));
+    const maxBlocks = Math.max(1, Math.floor(input.maxBlocks));
+
+    const blocks = input.blocks.slice(0, maxBlocks);
+    if (blocks.length === 0) return [];
+
+    const [candidateEmbedding] = await embedBatch([input.candidateContent]);
+    if (!candidateEmbedding) return [];
+
+    // Embed blocks in batch
+    const blockEmbeddings = await embedBatch(blocks.map((b) => b.text));
+
+    const scored = blocks
+        .map((block, i) => {
+            const emb = blockEmbeddings[i] ?? [];
+            const score = cosineSimilarity(candidateEmbedding, emb);
+            return { block, score };
+        })
+        .sort((a, b) => b.score - a.score)
+        .slice(0, topK);
+
+    return scored;
+};
+
+const normalizeForSlug = (value: string): string =>
+    value
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/\u00a0/g, " ")
+        .replace(/[^a-z0-9\s-]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+
+const SLUG_STOPWORDS = new Set([
+    "como",
+    "abrir",
+    "abertura",
+    "uma",
+    "um",
+    "de",
+    "da",
+    "do",
+    "dos",
+    "das",
+    "e",
+    "para",
+    "por",
+    "no",
+    "na",
+    "nos",
+    "nas",
+    "sua",
+    "seu",
+    "empresa",
+    "empresas",
+    "negocio",
+    "negocios",
+    "blog",
+    "guia",
+    "completo",
+    "passo",
+    "passos",
+    "primeiros",
+    "dicas",
+]);
+
+const tokenizeSlug = (slug: string): string[] =>
+    slug
+        .split("-")
+        .map((t) => normalizeForSlug(t))
+        .map((t) => t.trim())
+        .filter(Boolean);
+
+/**
+ * Extracts 1-2 (sometimes 3) tokens from the destination slug as a "topic noun phrase".
+ * Example:
+ * - /como-abrir-uma-loja-virtual/ => ["loja","virtual"]
+ * - /como-abrir-um-restaurante/ => ["restaurante"]
+ */
+const extractTopicFromSatelliteSlug = (url: string): string[] | null => {
+    try {
+        const u = new URL(url);
+        const parts = u.pathname
+            .split("/")
+            .map((p) => p.trim())
+            .filter(Boolean);
+
+        const slug = parts[parts.length - 1] ?? "";
+        if (!slug) return null;
+
+        const tokens = tokenizeSlug(slug).filter(
+            (t) => t.length > 2 && !SLUG_STOPWORDS.has(t),
+        );
+
+        if (tokens.length === 0) return null;
+
+        // Prefer 1-3 tokens from the tail (topic noun phrase).
+        // Examples:
+        // - "como-abrir-uma-loja-virtual" => ["loja","virtual"]
+        // - "abrir-uma-agencia-de-viagens" => ["agencia","viagens"]
+        // - "como-abrir-um-restaurante" => ["restaurante"]
+        const maxLen = Math.min(3, tokens.length);
+        const tail = tokens.slice(tokens.length - maxLen);
+
+        if (tail.length === 1) return tail;
+
+        // If tail is 3 tokens, keep last 2
+        if (tail.length === 3) return tail.slice(1);
+
+        // Otherwise keep 2 tokens
+        return tail;
+    } catch {
+        return null;
+    }
+};
+
+const normalizeAnchorForMatch = (value: string): string =>
+    normalizeForSlug(value).replace(/\s+/g, " ").trim();
+
+const anchorContainsTopicTokens = (
+    anchor: string,
+    topicTokens: string[],
+): boolean => {
+    const a = ` ${normalizeAnchorForMatch(anchor)} `;
+    const tokens = topicTokens.map(normalizeAnchorForMatch).filter(Boolean);
+    if (tokens.length === 0) return false;
+
+    // Require all topic tokens to appear (higher precision).
+    return tokens.every((t) => a.includes(` ${t} `));
+};
+
+const joinTopicPtBr = (topicTokens: string[]): string => {
+    // Keep it simple & deterministic; allow "de" in some common phrases when obvious.
+    // We'll re-inject "de" for "agencia viagens" -> "agência de viagens"
+    const tokens = topicTokens.map(normalizeAnchorForMatch).filter(Boolean);
+    if (
+        tokens.length === 2 &&
+        tokens[0] === "agencia" &&
+        tokens[1] === "viagens"
+    ) {
+        return "agência de viagens";
+    }
+    if (tokens.length === 2 && tokens[0] === "loja" && tokens[1] === "virtual") {
+        return "loja virtual";
+    }
+    return tokens.join(" ");
+};
+
+const chooseIndefiniteArticlePtBr = (topic: string): "um" | "uma" => {
+    // Heuristic: many feminine nouns end with 'a'. Not perfect, but better than nothing.
+    const t = normalizeAnchorForMatch(topic);
+    if (t.endsWith("a")) return "uma";
+    return "um";
+};
+
+const chooseIndefiniteArticleForTopicTokensPtBr = (
+    topicTokens: string[],
+): "um" | "uma" => {
+    // Prefer the "head noun" (first token) when topic has multiple words:
+    // - "loja virtual" -> head "loja" -> "uma"
+    // - "agência de viagens" -> head "agência" -> "uma"
+    // Fallback to the full topic string when no tokens.
+    const head = topicTokens[0] ?? "";
+    return chooseIndefiniteArticlePtBr(head || topicTokens.join(" "));
+};
+
+const buildSuggestedAnchorFromTopic = (
+    topicTokens: string[],
+): AnchorHint | null => {
+    const topic = joinTopicPtBr(topicTokens);
+    if (!topic) return null;
+
+    const article = chooseIndefiniteArticleForTopicTokensPtBr(topicTokens);
+    const anchor =
+        topicTokens.length >= 2
+            ? `como abrir ${article} ${topic}`
+            : `abrir ${article} ${topic}`;
+
+    return { anchor, slugTopicTokens: topicTokens, source: "slug_topic" };
+};
+
+const pickBestBlockPreferTopic = (input: {
+    blocks: PrincipalBlock[];
+    candidateContent: string;
+    slugTopicTokens?: string[] | null;
+}): PrincipalBlock | null => {
+    const slugTopicTokens = input.slugTopicTokens ?? null;
+
+    if (slugTopicTokens && slugTopicTokens.length > 0) {
+        const topicPhrase = normalizeAnchorForMatch(slugTopicTokens.join(" "));
+        const topicParts = slugTopicTokens
+            .map(normalizeAnchorForMatch)
+            .filter(Boolean);
+
+        // Prefer blocks that mention all topic tokens (highest precision)
+        const byAllTokens = input.blocks.filter((b) => {
+            const bt = ` ${normalizeAnchorForMatch(b.text)} `;
+            return topicParts.every((t) => bt.includes(` ${t} `));
+        });
+        if (byAllTokens.length > 0) {
+            return pickBestBlock(byAllTokens, input.candidateContent);
+        }
+
+        // Next: mention the topic phrase
+        const byPhrase = input.blocks.filter((b) =>
+            normalizeAnchorForMatch(b.text).includes(topicPhrase),
+        );
+        if (byPhrase.length > 0) {
+            return pickBestBlock(byPhrase, input.candidateContent);
+        }
+    }
+
+    return pickBestBlock(input.blocks, input.candidateContent);
+};
+
+const pickBestBlockWithEmbeddingRerank = async (input: {
+    blocks: PrincipalBlock[];
+    candidateContent: string;
+    slugTopicTokens?: string[] | null;
+}): Promise<PrincipalBlock | null> => {
+    const topCandidates = await rerankBlocksByEmbeddings({
+        candidateContent: input.candidateContent,
+        blocks: input.blocks,
+        topK: BLOCK_RERANK_TOP_K,
+        maxBlocks: MAX_BLOCK_EMBEDDINGS,
+    });
+
+    if (topCandidates.length === 0) {
+        return pickBestBlockPreferTopic(input);
+    }
+
+    // Among top-K embedding blocks, prefer topic matches for editorial precision
+    const topBlocks = topCandidates.map((c) => c.block);
+    return pickBestBlockPreferTopic({
+        blocks: topBlocks,
+        candidateContent: input.candidateContent,
+        slugTopicTokens: input.slugTopicTokens,
+    });
+};
+
 /**
  * Strategic guardrails
  *
@@ -355,6 +670,8 @@ const pickBestBlock = (
 
     return best;
 };
+
+// (removed duplicate slug-topic helpers block; the canonical implementation exists earlier in this file)
 
 const ensureSingleMarkdownLink = (
     modifiedBlockText: string,
@@ -582,16 +899,26 @@ const judgeCandidatesNode = async (state: StrategistInlinksBlockState) => {
             continue;
         }
 
+        const slugTopicTokens = extractTopicFromSatelliteSlug(candidate.url);
+        const anchorHint = slugTopicTokens
+            ? buildSuggestedAnchorFromTopic(slugTopicTokens)
+            : null;
+
+        const meta =
+            (state.analysisMetas ?? []).find((m) => m.url === candidate.url) ??
+            undefined;
+
         // Prefer a block that hasn't been used yet. If the best block is already used,
         // fall back to the next best by a simple retry strategy:
         // - temporarily filter used blocks and pick again.
         const remainingBlocks = eligibleBlocks.filter(
             (b) => !usedBlockIds.has(b.id),
         );
-        const bestBlock = pickBestBlock(
-            remainingBlocks.length > 0 ? remainingBlocks : eligibleBlocks,
-            candidate.content,
-        );
+        const bestBlock = await pickBestBlockWithEmbeddingRerank({
+            blocks: remainingBlocks.length > 0 ? remainingBlocks : eligibleBlocks,
+            candidateContent: candidate.content,
+            slugTopicTokens,
+        });
 
         if (!bestBlock) {
             rejected.push({
@@ -617,13 +944,32 @@ const judgeCandidatesNode = async (state: StrategistInlinksBlockState) => {
             "Sua missão é inserir um link interno natural no conteúdo do Artigo Pilar,",
             "mas SOMENTE dentro de UM bloco (parágrafo ou item de lista) fornecido.",
             "",
+            "MODO 2-STEP:",
+            "1) A âncora deve ser DETERMINÍSTICA quando fornecida (não invente outra).",
+            "2) Seu trabalho é encaixar o link com a âncora fornecida dentro do bloco, preservando o sentido.",
+            "",
             "REGRAS CRÍTICAS:",
             "1) Você pode reescrever o bloco, MAS deve preservar o sentido original.",
             "2) Insira exatamente UM link em Markdown no formato: [texto âncora](url).",
-            "3) A âncora DEVE ser descritiva e específica. Proibido âncoras genéricas/ambíguas como: 'clique aqui', 'saiba mais', 'leia mais', 'aqui', 'lista completa', 'opções disponíveis', 'modelo 2024', etc.",
-            "4) A âncora deve ter 2 a 6 palavras e, sempre que possível, refletir o tópico da URL candidata (termos que aparecem no conteúdo candidato).",
-            "5) Não adicione novos fatos. Não invente números.",
-            "6) Se não houver inserção natural no bloco fornecido, responda ok:false.",
+            "3) Insira SOMENTE 1 link. Não use HTML (<a href=...>), apenas Markdown.",
+            "4) Não adicione novos fatos. Não invente números.",
+            "5) Se não houver inserção natural no bloco fornecido, responda ok:false.",
+            ...(meta?.title || meta?.h1 || meta?.canonicalUrl
+                ? [
+                      "",
+                      "METADADOS DO DESTINO (para coerência semântica):",
+                      meta?.title ? `title: ${meta.title}` : "",
+                      meta?.h1 ? `h1: ${meta.h1}` : "",
+                      meta?.canonicalUrl ? `canonical: ${meta.canonicalUrl}` : "",
+                  ].filter(Boolean)
+                : []),
+            ...(anchorHint
+                ? [
+                      "",
+                      "ÂNCORA DETERMINÍSTICA (use exatamente este texto como âncora, sem modificar):",
+                      anchorHint.anchor,
+                  ]
+                : []),
             "",
             "CANDIDATO:",
             `URL: ${candidate.url}`,
@@ -651,10 +997,22 @@ const judgeCandidatesNode = async (state: StrategistInlinksBlockState) => {
         ].join("\n");
 
         try {
-            const response = await llm.invoke([
-                { role: "system", content: "Responda apenas JSON válido." },
-                { role: "user", content: prompt },
-            ]);
+            const invokeOnce = async (extraInstruction?: string) => {
+                const retryPrompt = extraInstruction
+                    ? [
+                          prompt,
+                          "",
+                          "INSTRUÇÃO EXTRA (RETRY):",
+                          extraInstruction,
+                      ].join("\n")
+                    : prompt;
+                return llm.invoke([
+                    { role: "system", content: "Responda apenas JSON válido." },
+                    { role: "user", content: retryPrompt },
+                ]);
+            };
+
+            const response = await invokeOnce();
 
             const raw =
                 typeof response.content === "string" ? response.content : "";
@@ -711,12 +1069,64 @@ const judgeCandidatesNode = async (state: StrategistInlinksBlockState) => {
                     candidate.url,
                 )
             ) {
-                rejected.push({
-                    url: candidate.url,
-                    reason: "O bloco modificado deve conter exatamente 1 link em Markdown apontando para a URL candidata.",
-                    score: candidate.score,
-                });
-                continue;
+                // Single retry: ask the model to fix only the formal constraint (exactly one Markdown link to the expected URL)
+                const retry = await invokeOnce(
+                    [
+                        "Corrija SOMENTE o campo modified_block_text para conter exatamente 1 link em Markdown apontando para a URL candidata.",
+                        "Não adicione nenhum outro link.",
+                        "Não use HTML.",
+                        "Mantenha a âncora descritiva e preserve o sentido do bloco.",
+                        `A URL do link deve ser exatamente: ${candidate.url}`,
+                    ].join(" "),
+                );
+                const retryRaw =
+                    typeof retry.content === "string" ? retry.content : "";
+                const retryJsonMatch = retryRaw.match(/\{[\s\S]*\}/);
+                const retryParsedJson = retryJsonMatch
+                    ? JSON.parse(retryJsonMatch[0])
+                    : null;
+                const retryParsed = retryParsedJson
+                    ? DecisionSchema.safeParse(retryParsedJson)
+                    : null;
+
+                if (!retryParsed?.success) {
+                    rejected.push({
+                        url: candidate.url,
+                        reason: "Falha ao validar a resposta do modelo no retry (JSON inválido).",
+                        score: candidate.score,
+                    });
+                    continue;
+                }
+
+                const retryDecision = retryParsed.data;
+
+                if (
+                    !retryDecision.ok ||
+                    retryDecision.block_id !== bestBlock.id ||
+                    retryDecision.original_block_text.trim() !==
+                        bestBlock.text.trim() ||
+                    !ensureSingleMarkdownLink(
+                        retryDecision.modified_block_text,
+                        candidate.url,
+                    ) ||
+                    !retryDecision.modified_block_text.includes(
+                        `[${retryDecision.anchor}](`,
+                    )
+                ) {
+                    rejected.push({
+                        url: candidate.url,
+                        reason: "Retry não conseguiu cumprir a regra formal do link Markdown único para a URL candidata.",
+                        score: candidate.score,
+                    });
+                    continue;
+                }
+
+                // Replace decision with retryDecision (now compliant)
+                decision.ok = retryDecision.ok;
+                decision.anchor = retryDecision.anchor;
+                decision.modified_block_text = retryDecision.modified_block_text;
+                decision.reason = retryDecision.reason;
+                decision.seo_metrics = retryDecision.seo_metrics;
             }
 
             // Ensure anchor appears inside the markdown link text
@@ -761,18 +1171,37 @@ const judgeCandidatesNode = async (state: StrategistInlinksBlockState) => {
             // Stronger anchor ↔ destination coherence:
             // require at least one distinctive token from the candidate content to appear in the anchor.
             // This helps avoid anchors like "processo de abertura de empresa" pointing to very specific pages (e.g., CNAE).
-            if (
-                !anchorContainsDistinctiveToken(
-                    decision.anchor,
-                    candidate.content,
-                )
-            ) {
-                rejected.push({
-                    url: candidate.url,
-                    reason: "Âncora rejeitada por baixa correspondência semântica com o destino (faltam termos distintivos do conteúdo candidato na âncora). Ajuste a âncora para refletir o tópico específico da URL de destino.",
-                    score: candidate.score,
-                });
-                continue;
+            // Prefer slug-topic validation over "distinctive tokens":
+            // If we can extract a topic from the satellite URL slug, it is a stronger and more direct signal.
+            // In that case, we accept anchors that contain the slug-topic even if "distinctive token" heuristics are noisy.
+            if (slugTopicTokens) {
+                if (
+                    !anchorContainsTopicTokens(decision.anchor, slugTopicTokens)
+                ) {
+                    rejected.push({
+                        url: candidate.url,
+                        reason: `Âncora rejeitada por não conter o tópico principal do destino (${slugTopicTokens.join(
+                            " ",
+                        )}) extraído do slug. Ajuste a âncora para incluir esse termo.`,
+                        score: candidate.score,
+                    });
+                    continue;
+                }
+            } else {
+                // No slug-topic available: fall back to token-level distinctiveness heuristics
+                if (
+                    !anchorContainsDistinctiveToken(
+                        decision.anchor,
+                        candidate.content,
+                    )
+                ) {
+                    rejected.push({
+                        url: candidate.url,
+                        reason: "Âncora rejeitada por baixa correspondência semântica com o destino (faltam termos distintivos do conteúdo candidato na âncora). Ajuste a âncora para refletir o tópico específico da URL de destino.",
+                        score: candidate.score,
+                    });
+                    continue;
+                }
             }
 
             // Avoid duplicate anchors across the whole document (UX: prevents "same anchor everywhere")
