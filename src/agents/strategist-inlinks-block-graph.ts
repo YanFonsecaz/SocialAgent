@@ -152,6 +152,11 @@ const DecisionSchema = z.object({
         .optional(),
 });
 
+const FitJudgeSchema = z.object({
+    ok: z.boolean(),
+    reason: z.string().min(1),
+});
+
 const AgentState = Annotation.Root({
     principalUrl: Annotation<string>(),
     analysisUrls: Annotation<string[]>(),
@@ -197,6 +202,13 @@ const AgentState = Annotation.Root({
 type StrategistInlinksBlockState = typeof AgentState.State;
 
 const llm = new ChatOpenAI({
+    model: "gpt-4o-mini",
+    temperature: 0,
+});
+
+// Cheap final judge to validate whether the insertion "fits" the block context.
+// Keep temperature at 0 for determinism and avoid verbosity.
+const fitJudgeLlm = new ChatOpenAI({
     model: "gpt-4o-mini",
     temperature: 0,
 });
@@ -411,6 +423,114 @@ const rerankBlocksByEmbeddings = async (input: {
     return scored;
 };
 
+const escapeRegExp = (value: string): string =>
+    value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const insertSingleMarkdownLinkProgrammatically = (input: {
+    blockText: string;
+    anchorText: string;
+    url: string;
+}): string | null => {
+    const blockText = input.blockText;
+    const anchorText = input.anchorText.trim();
+    const url = input.url.trim();
+
+    if (!blockText.trim() || !anchorText || !url) return null;
+
+    // If already has any markdown link, do not touch (respect "one link per block" & preserve existing links policy).
+    if (/\[[^\]]+\]\(([^)]+)\)/.test(blockText)) return null;
+
+    // If the anchor already appears as plain text in the block, wrap the first occurrence.
+    const re = new RegExp(`\\b${escapeRegExp(anchorText)}\\b`, "i");
+    if (re.test(blockText)) {
+        return blockText.replace(re, `[${anchorText}](${url})`);
+    }
+
+    // Otherwise, append a short, natural sentence at the end.
+    const suffix =
+        blockText.endsWith(".") ||
+        blockText.endsWith("!") ||
+        blockText.endsWith("?")
+            ? " "
+            : ". ";
+    return `${blockText}${suffix}Se você quiser se aprofundar, confira [${anchorText}](${url}).`;
+};
+
+const ensureNoHtmlAnchors = (text: string): boolean => {
+    // Disallow HTML anchors; we want Markdown link only.
+    return !/<a\s+[^>]*href\s*=/i.test(text);
+};
+
+const judgeFitForBlock = async (input: {
+    principalUrl: string;
+    candidateUrl: string;
+    candidateTitle?: string;
+    candidateH1?: string;
+    anchorText: string;
+    originalBlockText: string;
+    modifiedBlockText: string;
+}): Promise<{ ok: boolean; reason: string }> => {
+    // Quick, cheap hard checks before LLM:
+    if (!ensureNoHtmlAnchors(input.modifiedBlockText)) {
+        return {
+            ok: false,
+            reason: "Inserção rejeitada: o bloco modificado contém HTML (<a href=...>), permitido apenas Markdown.",
+        };
+    }
+
+    // LLM judge:
+    // - Validate semantic fit (does the link make sense at this point?)
+    // - Validate that the modification preserves meaning and doesn't add unrelated CTA noise
+    // - Validate that the anchor phrase matches the destination topic
+    const prompt = [
+        "Você é um revisor sênior de SEO/editoria.",
+        "Avalie se a inserção do link faz sentido DENTRO do bloco, sem desviar a intenção e sem ficar artificial.",
+        "",
+        "Regras de aprovação:",
+        "- O bloco modificado deve manter o sentido original.",
+        "- O link deve ser contextualmente relevante para o bloco (encaixe natural).",
+        "- A âncora deve representar bem o destino.",
+        "- Se parecer 'forçado', 'robótico' ou 'call to action' inadequado para o parágrafo, rejeite.",
+        "",
+        `URL Pilar: ${input.principalUrl}`,
+        `URL Destino: ${input.candidateUrl}`,
+        input.candidateTitle ? `Destino title: ${input.candidateTitle}` : "",
+        input.candidateH1 ? `Destino h1: ${input.candidateH1}` : "",
+        "",
+        `Âncora: ${input.anchorText}`,
+        "",
+        "BLOCO ORIGINAL:",
+        input.originalBlockText,
+        "",
+        "BLOCO MODIFICADO:",
+        input.modifiedBlockText,
+        "",
+        "Responda SOMENTE com JSON válido:",
+        `{"ok": boolean, "reason": "..."}`,
+    ]
+        .filter(Boolean)
+        .join("\n");
+
+    const response = await fitJudgeLlm.invoke([
+        { role: "system", content: "Responda apenas JSON válido." },
+        { role: "user", content: prompt },
+    ]);
+
+    const raw = typeof response.content === "string" ? response.content : "";
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    const parsedJson = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+    const parsed = parsedJson ? FitJudgeSchema.safeParse(parsedJson) : null;
+
+    if (!parsed?.success) {
+        return {
+            ok: false,
+            reason: "Inserção rejeitada: verificador final retornou JSON inválido.",
+        };
+    }
+
+    return parsed.data;
+};
+
 const normalizeForSlug = (value: string): string =>
     value
         .toLowerCase()
@@ -454,6 +574,17 @@ const SLUG_STOPWORDS = new Set([
     "dicas",
 ]);
 
+const SLUG_INTENT_TOKENS = new Set([
+    "roadmap",
+    "curriculo",
+    "currículo",
+    "qual",
+    "quais",
+    "melhor",
+    "facil",
+    "fácil",
+]);
+
 const tokenizeSlug = (slug: string): string[] =>
     slug
         .split("-")
@@ -478,19 +609,21 @@ const extractTopicFromSatelliteSlug = (url: string): string[] | null => {
         const slug = parts[parts.length - 1] ?? "";
         if (!slug) return null;
 
-        const tokens = tokenizeSlug(slug).filter(
-            (t) => t.length > 2 && !SLUG_STOPWORDS.has(t),
-        );
+        const rawTokens = tokenizeSlug(slug);
+        const tokens = rawTokens.filter((t) => t.length > 2);
 
-        if (tokens.length === 0) return null;
+        const contentTokens = tokens.filter(
+            (t) => !SLUG_STOPWORDS.has(t) && !SLUG_INTENT_TOKENS.has(t),
+        );
+        if (contentTokens.length === 0) return null;
 
         // Prefer 1-3 tokens from the tail (topic noun phrase).
         // Examples:
         // - "como-abrir-uma-loja-virtual" => ["loja","virtual"]
         // - "abrir-uma-agencia-de-viagens" => ["agencia","viagens"]
-        // - "como-abrir-um-restaurante" => ["restaurante"]
-        const maxLen = Math.min(3, tokens.length);
-        const tail = tokens.slice(tokens.length - maxLen);
+        // - "qual-a-linguagem-de-programacao-mais-facil-python" => ["python"]
+        const maxLen = Math.min(3, contentTokens.length);
+        const tail = contentTokens.slice(contentTokens.length - maxLen);
 
         if (tail.length === 1) return tail;
 
@@ -501,6 +634,29 @@ const extractTopicFromSatelliteSlug = (url: string): string[] | null => {
         return tail;
     } catch {
         return null;
+    }
+};
+
+const inferSlugIntent = (
+    url: string,
+): "how_to" | "which" | "roadmap" | "curriculum" | "generic" => {
+    try {
+        const u = new URL(url);
+        const parts = u.pathname
+            .split("/")
+            .map((p) => p.trim())
+            .filter(Boolean);
+        const slug = parts[parts.length - 1] ?? "";
+        const t = slug.toLowerCase();
+
+        if (t.startsWith("como-")) return "how_to";
+        if (t.startsWith("qual-") || t.startsWith("quais-")) return "which";
+        if (t.includes("roadmap")) return "roadmap";
+        if (t.includes("curriculo") || t.includes("curr%C3%ADculo"))
+            return "curriculum";
+        return "generic";
+    } catch {
+        return "generic";
     }
 };
 
@@ -554,19 +710,98 @@ const chooseIndefiniteArticleForTopicTokensPtBr = (
     return chooseIndefiniteArticlePtBr(head || topicTokens.join(" "));
 };
 
-const buildSuggestedAnchorFromTopic = (
-    topicTokens: string[],
-): AnchorHint | null => {
+const buildSuggestedAnchorFromTopic = (input: {
+    url: string;
+    topicTokens: string[];
+}): AnchorHint | null => {
+    const topicTokens = input.topicTokens;
     const topic = joinTopicPtBr(topicTokens);
     if (!topic) return null;
 
-    const article = chooseIndefiniteArticleForTopicTokensPtBr(topicTokens);
-    const anchor =
-        topicTokens.length >= 2
-            ? `como abrir ${article} ${topic}`
-            : `abrir ${article} ${topic}`;
+    const intent = inferSlugIntent(input.url);
 
-    return { anchor, slugTopicTokens: topicTokens, source: "slug_topic" };
+    // Template by intent to avoid nonsense anchors (e.g., "como abrir" on "qual-a-linguagem...")
+    if (intent === "roadmap") {
+        return {
+            anchor: "roadmap de programação",
+            slugTopicTokens: topicTokens,
+            source: "slug_topic",
+        };
+    }
+
+    if (intent === "curriculum") {
+        return {
+            anchor: "currículo para programação",
+            slugTopicTokens: topicTokens,
+            source: "slug_topic",
+        };
+    }
+
+    if (intent === "which") {
+        // If we have a clear tail token like "python", build a specific anchor.
+        // Otherwise fall back to a generic, still-coherent anchor.
+        if (topicTokens.length >= 1) {
+            const last = normalizeAnchorForMatch(
+                topicTokens[topicTokens.length - 1] ?? "",
+            );
+            if (last) {
+                return {
+                    anchor: `linguagem de programação mais fácil (${last})`,
+                    slugTopicTokens: topicTokens,
+                    source: "slug_topic",
+                };
+            }
+        }
+        return {
+            anchor: "melhor linguagem para iniciantes",
+            slugTopicTokens: topicTokens,
+            source: "slug_topic",
+        };
+    }
+
+    // Default to "how-to" style only when the slug suggests it.
+    const article = chooseIndefiniteArticleForTopicTokensPtBr(topicTokens);
+
+    if (intent === "how_to" || intent === "generic") {
+        const anchor =
+            topicTokens.length >= 2
+                ? `como começar com ${topic}`
+                : `como começar com ${topic}`;
+
+        // For business "abrir X" slugs, keep the prior proven pattern.
+        // If the slug actually contains "abrir", prefer "como abrir".
+        const slugLower = (() => {
+            try {
+                const u = new URL(input.url);
+                const parts = u.pathname.split("/").filter(Boolean);
+                return (parts[parts.length - 1] ?? "").toLowerCase();
+            } catch {
+                return "";
+            }
+        })();
+
+        const preferAbrir = slugLower.includes("abrir");
+        if (preferAbrir) {
+            const abrirAnchor =
+                topicTokens.length >= 2
+                    ? `como abrir ${article} ${topic}`
+                    : `abrir ${article} ${topic}`;
+            return {
+                anchor: abrirAnchor,
+                slugTopicTokens: topicTokens,
+                source: "slug_topic",
+            };
+        }
+
+        return { anchor, slugTopicTokens: topicTokens, source: "slug_topic" };
+    }
+
+    // fallback
+    return {
+        anchor: `como começar com ${topic}`,
+        slugTopicTokens: topicTokens,
+        source: "slug_topic",
+    };
 };
 
 const pickBestBlockPreferTopic = (input: {
@@ -901,7 +1136,10 @@ const judgeCandidatesNode = async (state: StrategistInlinksBlockState) => {
 
         const slugTopicTokens = extractTopicFromSatelliteSlug(candidate.url);
         const anchorHint = slugTopicTokens
-            ? buildSuggestedAnchorFromTopic(slugTopicTokens)
+            ? buildSuggestedAnchorFromTopic({
+                  url: candidate.url,
+                  topicTokens: slugTopicTokens,
+              })
             : null;
 
         const meta =
@@ -1022,16 +1260,88 @@ const judgeCandidatesNode = async (state: StrategistInlinksBlockState) => {
                 ? DecisionSchema.safeParse(parsedJson)
                 : null;
 
-            if (!parsed?.success) {
+            let decision: z.infer<typeof DecisionSchema> | null = null;
+
+            if (parsed?.success) {
+                decision = parsed.data;
+            } else {
+                // Single retry: ask for strictly valid JSON only.
+                const retryJsonResponse = await invokeOnce(
+                    "Sua resposta anterior não era JSON válido. Responda SOMENTE com JSON válido seguindo exatamente o schema solicitado, sem texto extra.",
+                );
+                const retryRaw =
+                    typeof retryJsonResponse.content === "string"
+                        ? retryJsonResponse.content
+                        : "";
+                const retryJsonMatch = retryRaw.match(/\{[\s\S]*\}/);
+                const retryParsedJson = retryJsonMatch
+                    ? JSON.parse(retryJsonMatch[0])
+                    : null;
+                const retryParsed = retryParsedJson
+                    ? DecisionSchema.safeParse(retryParsedJson)
+                    : null;
+
+                if (!retryParsed?.success) {
+                    // Fallback programático (sem LLM): se existe âncora determinística, tenta inserir no bloco de forma segura.
+                    if (anchorHint?.anchor) {
+                        const modified = insertSingleMarkdownLinkProgrammatically(
+                            {
+                                blockText: bestBlock.text,
+                                anchorText: anchorHint.anchor,
+                                url: candidate.url,
+                            },
+                        );
+
+                        if (
+                            modified &&
+                            ensureSingleMarkdownLink(modified, candidate.url)
+                        ) {
+                            const anchorText = anchorHint.anchor;
+                            edits.push({
+                                blockId: bestBlock.id,
+                                targetUrl: candidate.url,
+                                anchor: anchorText,
+                                originalBlockText: bestBlock.text,
+                                modifiedBlockText: modified,
+                                overwriteBlock: true,
+                                justification:
+                                    "Fallback programático aplicado (LLM retornou JSON inválido).",
+                                metrics: { relevance: 0, authority: 0 },
+                            });
+
+                            usedUrls.add(candidate.url);
+                            usedBlockIds.add(bestBlock.id);
+                            usedAnchorsNormalized.add(
+                                anchorText
+                                    .toLowerCase()
+                                    .replace(/\u00a0/g, " ")
+                                    .replace(/\s+/g, " ")
+                                    .trim(),
+                            );
+
+                            continue;
+                        }
+                    }
+
+                    rejected.push({
+                        url: candidate.url,
+                        reason: "Falha ao validar a resposta do modelo (JSON inválido) mesmo após retry.",
+                        score: candidate.score,
+                    });
+                    continue;
+                }
+
+                decision = retryParsed.data;
+            }
+
+            if (!decision) {
                 rejected.push({
                     url: candidate.url,
-                    reason: "Falha ao validar a resposta do modelo (JSON inválido).",
+                    reason: "Falha ao validar a resposta do modelo (decisão ausente).",
                     score: candidate.score,
                 });
                 continue;
             }
-
-            const decision = parsed.data;
 
             if (!decision.ok) {
                 rejected.push({
@@ -1090,6 +1400,68 @@ const judgeCandidatesNode = async (state: StrategistInlinksBlockState) => {
                     : null;
 
                 if (!retryParsed?.success) {
+                    // Fallback programático (sem LLM): se existe âncora determinística, tenta inserir no bloco de forma segura.
+                    if (anchorHint?.anchor) {
+                        const modified = insertSingleMarkdownLinkProgrammatically(
+                            {
+                                blockText: bestBlock.text,
+                                anchorText: anchorHint.anchor,
+                                url: candidate.url,
+                            },
+                        );
+
+                        if (
+                            modified &&
+                            ensureSingleMarkdownLink(modified, candidate.url)
+                        ) {
+                            const anchorText = anchorHint.anchor;
+
+                            // Final fit judge
+                            const fit = await judgeFitForBlock({
+                                principalUrl: state.principalUrl,
+                                candidateUrl: candidate.url,
+                                candidateTitle: meta?.title,
+                                candidateH1: meta?.h1,
+                                anchorText,
+                                originalBlockText: bestBlock.text,
+                                modifiedBlockText: modified,
+                            });
+
+                            if (!fit.ok) {
+                                rejected.push({
+                                    url: candidate.url,
+                                    reason: `Inserção rejeitada pelo verificador final (fallback): ${fit.reason}`,
+                                    score: candidate.score,
+                                });
+                                continue;
+                            }
+
+                            edits.push({
+                                blockId: bestBlock.id,
+                                targetUrl: candidate.url,
+                                anchor: anchorText,
+                                originalBlockText: bestBlock.text,
+                                modifiedBlockText: modified,
+                                overwriteBlock: true,
+                                justification:
+                                    "Fallback programático aplicado (LLM retornou JSON inválido).",
+                                metrics: { relevance: 0, authority: 0 },
+                            });
+
+                            usedUrls.add(candidate.url);
+                            usedBlockIds.add(bestBlock.id);
+                            usedAnchorsNormalized.add(
+                                anchorText
+                                    .toLowerCase()
+                                    .replace(/\u00a0/g, " ")
+                                    .replace(/\s+/g, " ")
+                                    .trim(),
+                            );
+
+                            continue;
+                        }
+                    }
+
                     rejected.push({
                         url: candidate.url,
                         reason: "Falha ao validar a resposta do modelo no retry (JSON inválido).",
@@ -1113,6 +1485,68 @@ const judgeCandidatesNode = async (state: StrategistInlinksBlockState) => {
                         `[${retryDecision.anchor}](`,
                     )
                 ) {
+                    // Fallback programático (sem LLM): se existe âncora determinística, tenta inserir no bloco de forma segura.
+                    if (anchorHint?.anchor) {
+                        const modified = insertSingleMarkdownLinkProgrammatically(
+                            {
+                                blockText: bestBlock.text,
+                                anchorText: anchorHint.anchor,
+                                url: candidate.url,
+                            },
+                        );
+
+                        if (
+                            modified &&
+                            ensureSingleMarkdownLink(modified, candidate.url)
+                        ) {
+                            const anchorText = anchorHint.anchor;
+
+                            // Final fit judge
+                            const fit = await judgeFitForBlock({
+                                principalUrl: state.principalUrl,
+                                candidateUrl: candidate.url,
+                                candidateTitle: meta?.title,
+                                candidateH1: meta?.h1,
+                                anchorText,
+                                originalBlockText: bestBlock.text,
+                                modifiedBlockText: modified,
+                            });
+
+                            if (!fit.ok) {
+                                rejected.push({
+                                    url: candidate.url,
+                                    reason: `Inserção rejeitada pelo verificador final (fallback): ${fit.reason}`,
+                                    score: candidate.score,
+                                });
+                                continue;
+                            }
+
+                            edits.push({
+                                blockId: bestBlock.id,
+                                targetUrl: candidate.url,
+                                anchor: anchorText,
+                                originalBlockText: bestBlock.text,
+                                modifiedBlockText: modified,
+                                overwriteBlock: true,
+                                justification:
+                                    "Fallback programático aplicado (LLM falhou ao cumprir a regra formal de markdown).",
+                                metrics: { relevance: 0, authority: 0 },
+                            });
+
+                            usedUrls.add(candidate.url);
+                            usedBlockIds.add(bestBlock.id);
+                            usedAnchorsNormalized.add(
+                                anchorText
+                                    .toLowerCase()
+                                    .replace(/\u00a0/g, " ")
+                                    .replace(/\s+/g, " ")
+                                    .trim(),
+                            );
+
+                            continue;
+                        }
+                    }
+
                     rejected.push({
                         url: candidate.url,
                         reason: "Retry não conseguiu cumprir a regra formal do link Markdown único para a URL candidata.",
@@ -1229,6 +1663,25 @@ const judgeCandidatesNode = async (state: StrategistInlinksBlockState) => {
                 rejected.push({
                     url: candidate.url,
                     reason: "Bloco já utilizado por outro link (evitando múltiplas alterações no mesmo bloco).",
+                    score: candidate.score,
+                });
+                continue;
+            }
+
+            const finalFit = await judgeFitForBlock({
+                principalUrl: state.principalUrl,
+                candidateUrl: candidate.url,
+                candidateTitle: meta?.title,
+                candidateH1: meta?.h1,
+                anchorText: decision.anchor,
+                originalBlockText: decision.original_block_text,
+                modifiedBlockText: decision.modified_block_text,
+            });
+
+            if (!finalFit.ok) {
+                rejected.push({
+                    url: candidate.url,
+                    reason: `Inserção rejeitada pelo verificador final: ${finalFit.reason}`,
                     score: candidate.score,
                 });
                 continue;
