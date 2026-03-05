@@ -23,6 +23,8 @@ type UiChangeItem = {
     modifiedText: string;
     justification: string;
     source: "edits" | "report";
+    blockId?: string;
+    insertionStrategy?: "inline" | "semantic-paragraph" | "append" | "block";
 };
 import { AppHeader } from "./AppHeader";
 import { HelpModal } from "./HelpModal";
@@ -72,21 +74,27 @@ export function StrategistInlinks() {
 
     const stringifyMaybeErrorDetails = (err: ErrorWithDetails): string | null => {
         if (!err || typeof err !== "object") return null;
-        const e = err as any;
+        const e = err as Record<string, unknown>;
 
         const details = e?.details;
         if (details && typeof details === "object") {
+            const detailsRecord = details as Record<string, unknown>;
             const message =
-                typeof details.message === "string" ? details.message : undefined;
+                typeof detailsRecord.message === "string"
+                    ? detailsRecord.message
+                    : undefined;
             const stack =
-                typeof details.stack === "string" ? details.stack : undefined;
+                typeof detailsRecord.stack === "string"
+                    ? detailsRecord.stack
+                    : undefined;
             if (message || stack) {
                 return [message, stack].filter(Boolean).join("\n");
             }
         }
 
         // Fallback: some fetch wrappers may throw Error(...) only
-        if (e instanceof Error && typeof e.message === "string") return e.message;
+        if (err instanceof Error && typeof err.message === "string")
+            return err.message;
 
         return null;
     };
@@ -249,6 +257,31 @@ export function StrategistInlinks() {
               "modified",
           )
         : "";
+
+    const uiChanges = useMemo<UiChangeItem[]>(() => {
+        if (!result) return [];
+        if (result.edits && result.edits.length > 0) {
+            return result.edits.map((edit) => ({
+                targetUrl: edit.targetUrl,
+                anchor: edit.anchor,
+                originalText: edit.originalBlockText,
+                modifiedText: edit.modifiedBlockText,
+                justification: edit.justification,
+                source: "edits",
+                blockId: edit.blockId,
+            }));
+        }
+
+        return result.report.map((item) => ({
+            targetUrl: item.targetUrl,
+            anchor: item.anchor,
+            originalText: item.originalSentence,
+            modifiedText: item.modifiedSentence,
+            justification: item.justification,
+            source: "report",
+            insertionStrategy: item.insertionStrategy,
+        }));
+    }, [result]);
 
     return (
         <div className="flex flex-col h-screen bg-gray-50 text-gray-900 font-sans">
@@ -424,10 +457,17 @@ export function StrategistInlinks() {
                             <motion.div
                                 initial={{ opacity: 0, y: 10 }}
                                 animate={{ opacity: 1, y: 0 }}
-                                className="max-w-4xl mx-auto w-full p-4 bg-red-50 border border-red-100 rounded-2xl flex items-center gap-3 text-red-800"
+                                className="max-w-4xl mx-auto w-full p-4 bg-red-50 border border-red-100 rounded-2xl flex items-start gap-3 text-red-800"
                             >
-                                <AlertCircle className="w-5 h-5 flex-shrink-0" />
-                                <p className="text-sm">{error}</p>
+                                <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                                <div className="space-y-1">
+                                    <p className="text-sm">{error}</p>
+                                    {errorDetails && (
+                                        <pre className="text-xs text-red-700 bg-red-100/60 border border-red-100 rounded-md p-2 whitespace-pre-wrap">
+                                            {errorDetails}
+                                        </pre>
+                                    )}
+                                </div>
                             </motion.div>
                         )}
 
@@ -501,25 +541,31 @@ export function StrategistInlinks() {
                                                         {item.targetUrl}
                                                     </a>
                                                 </p>
-                                                {item.insertionStrategy && (
-                                                    <p className="text-xs text-gray-400 mb-3">
-                                                        Inserção:{" "}
-                                                        <span className="font-medium text-gray-600">
+                                                <div className="flex flex-wrap items-center gap-2 mb-3 text-[11px] text-gray-500">
+                                                    <span className="bg-gray-50 border border-gray-200 px-2 py-0.5 rounded-full">
+                                                        Fonte: {item.source}
+                                                    </span>
+                                                    {item.blockId && (
+                                                        <span className="bg-gray-50 border border-gray-200 px-2 py-0.5 rounded-full">
+                                                            Block: {item.blockId}
+                                                        </span>
+                                                    )}
+                                                    {item.insertionStrategy && (
+                                                        <span className="bg-gray-50 border border-gray-200 px-2 py-0.5 rounded-full">
+                                                            Inserção:{" "}
                                                             {
                                                                 item.insertionStrategy
                                                             }
                                                         </span>
-                                                    </p>
-                                                )}
+                                                    )}
+                                                </div>
                                                 <div className="space-y-3">
                                                     <div>
                                                         <p className="text-xs font-semibold text-gray-400">
                                                             Antes
                                                         </p>
                                                         <p className="text-sm text-gray-700">
-                                                            {
-                                                                item.originalSentence
-                                                            }
+                                                            {item.originalText}
                                                         </p>
                                                     </div>
                                                     <div>
@@ -527,11 +573,21 @@ export function StrategistInlinks() {
                                                             Depois
                                                         </p>
                                                         <p className="text-sm text-gray-700">
-                                                            {
-                                                                item.modifiedSentence
-                                                            }
+                                                            {item.modifiedText}
                                                         </p>
                                                     </div>
+                                                    {item.justification && (
+                                                        <div>
+                                                            <p className="text-xs font-semibold text-gray-400">
+                                                                Justificativa
+                                                            </p>
+                                                            <p className="text-sm text-gray-600">
+                                                                {
+                                                                    item.justification
+                                                                }
+                                                            </p>
+                                                        </div>
+                                                    )}
                                                 </div>
                                             </div>
                                         ))}
@@ -786,6 +842,87 @@ export function StrategistInlinks() {
                                     </div>
                                 )}
 
+                                {/* Edits (novo contrato) */}
+                                {result.edits && result.edits.length > 0 && (
+                                    <div className="bg-white rounded-xl border border-blue-100 shadow-sm overflow-hidden">
+                                        <div className="p-5 border-b border-blue-50">
+                                            <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+                                                <CheckCircle2 className="w-4 h-4 text-blue-600" />
+                                                Edições sugeridas (
+                                                {result.edits.length})
+                                            </h3>
+                                        </div>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-sm">
+                                                <thead>
+                                                    <tr className="bg-gray-50 text-left">
+                                                        <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                                                            Block
+                                                        </th>
+                                                        <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                                                            Âncora
+                                                        </th>
+                                                        <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                                                            URL
+                                                        </th>
+                                                        <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                                                            Justificativa
+                                                        </th>
+                                                        <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                                                            Status
+                                                        </th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-gray-50">
+                                                    {result.edits.map(
+                                                        (edit, idx) => (
+                                                            <tr
+                                                                key={`${edit.blockId}-${idx}`}
+                                                                className="hover:bg-gray-50/50 transition-colors"
+                                                            >
+                                                                <td className="px-5 py-4 text-xs text-gray-600">
+                                                                    {edit.blockId}
+                                                                </td>
+                                                                <td className="px-5 py-4">
+                                                                    <span className="inline-block bg-blue-50 text-blue-700 px-2 py-0.5 rounded text-xs font-medium">
+                                                                        {
+                                                                            edit.anchor
+                                                                        }
+                                                                    </span>
+                                                                </td>
+                                                                <td className="px-5 py-4">
+                                                                    <a
+                                                                        href={
+                                                                            edit.targetUrl
+                                                                        }
+                                                                        target="_blank"
+                                                                        rel="noreferrer"
+                                                                        className="text-primary hover:underline break-all text-xs"
+                                                                    >
+                                                                        {
+                                                                            edit.targetUrl
+                                                                        }
+                                                                    </a>
+                                                                </td>
+                                                                <td className="px-5 py-4 text-gray-600 text-xs">
+                                                                    {
+                                                                        edit.justification
+                                                                    }
+                                                                </td>
+                                                                <td className="px-5 py-4 text-xs text-gray-500">
+                                                                    {edit.skippedReason
+                                                                        ? `Pulou: ${edit.skippedReason}`
+                                                                        : "Pronta para aplicar"}
+                                                                </td>
+                                                            </tr>
+                                                        ),
+                                                    )}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+
                                 {/* Rejected Inlinks (collapsible) */}
                                 {result.rejeitadas.length > 0 && (
                                     <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
@@ -835,6 +972,9 @@ export function StrategistInlinks() {
                                                                     <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                                                                         Motivo
                                                                     </th>
+                                                                    <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                                                                        Score
+                                                                    </th>
                                                                 </tr>
                                                             </thead>
                                                             <tbody className="divide-y divide-gray-50">
@@ -864,9 +1004,16 @@ export function StrategistInlinks() {
                                                                                 </a>
                                                                             </td>
                                                                             <td className="px-5 py-4 text-gray-500 text-xs">
-                                                                                {
-                                                                                    item.reason
-                                                                                }
+                                                                                {item.reason ||
+                                                                                    "Sem motivo informado"}
+                                                                            </td>
+                                                                            <td className="px-5 py-4 text-gray-500 text-xs">
+                                                                                {typeof item.score ===
+                                                                                "number"
+                                                                                    ? item.score.toFixed(
+                                                                                          2,
+                                                                                      )
+                                                                                    : "—"}
                                                                             </td>
                                                                         </tr>
                                                                     ),
