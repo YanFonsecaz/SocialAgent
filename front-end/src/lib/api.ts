@@ -2,7 +2,9 @@
 //
 // In production, the frontend is served by the same server as the API.
 // Use same-origin relative URLs to avoid CORS/preflight issues.
-const API_BASE_URL = "";
+const API_BASE_URL =
+    import.meta.env.VITE_API_BASE_URL ??
+    (import.meta.env.DEV ? "http://localhost:3333" : "");
 
 // ---- Social Agent API ----
 
@@ -148,6 +150,109 @@ export async function runStrategistInlinks(
     return response.json();
 }
 
+// ---- Content Reviewer API ----
+
+export interface ContentReviewItem {
+    url: string;
+    contentType: "blog" | "copy" | "descricao";
+    primaryKeyword: string;
+    supportingKeywords: string[];
+    expectedWordCount: number;
+    outline: string[];
+    cta: string;
+    personaPain: string;
+    internalLinksTarget?: number;
+    maxInternalLinks?: number;
+    titleTagExpected?: string;
+}
+
+export interface ContentReviewerRequest {
+    items: ContentReviewItem[];
+    guidelines?: string;
+}
+
+export interface ContentReviewerDecision {
+    url: string;
+    status: "approved" | "rejected" | "error";
+    reason: string;
+}
+
+export interface ContentReviewerResponse {
+    message: string;
+    results: ContentReviewerDecision[];
+    total: number;
+    approved: number;
+    rejected: number;
+    errors?: number;
+}
+
+async function parseApiError(response: Response): Promise<string> {
+    let fallback = `Error: ${response.statusText}`;
+    try {
+        const data = (await response.json()) as {
+            error?: string;
+            details?: unknown;
+        };
+        if (data?.error && typeof data.error === "string") {
+            fallback = data.error;
+        }
+    } catch {
+        // Ignore JSON parse errors and keep fallback status text.
+    }
+    return fallback;
+}
+
+/** Envia itens para revisão de conteúdo (JSON). */
+export async function runContentReviewer(
+    data: ContentReviewerRequest,
+): Promise<ContentReviewerResponse> {
+    const response = await fetch(`${API_BASE_URL}/strategist/content-reviewer`, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify(data),
+    });
+
+    if (!response.ok) {
+        throw new Error(await parseApiError(response));
+    }
+
+    return response.json();
+}
+
+/** Baixa o template CSV de revisão de conteúdo. */
+export async function fetchContentReviewerTemplate(): Promise<string> {
+    const response = await fetch(
+        `${API_BASE_URL}/strategist/content-reviewer/template`,
+    );
+
+    if (!response.ok) {
+        throw new Error(`Error: ${response.statusText}`);
+    }
+
+    return response.text();
+}
+
+/** Envia CSV (upload) para revisão de conteúdo. */
+export async function runContentReviewerCsv(
+    file: File,
+): Promise<ContentReviewerResponse> {
+    const form = new FormData();
+    form.append("file", file);
+
+    const response = await fetch(`${API_BASE_URL}/strategist/content-reviewer`, {
+        method: "POST",
+        body: form,
+    });
+
+    if (!response.ok) {
+        throw new Error(await parseApiError(response));
+    }
+
+    return response.json();
+}
+
 // ---- Trends Master API ----
 
 export interface TrendsConfig {
@@ -243,5 +348,13 @@ export async function updateTrendsMasterConfig(
         throw new Error(`Error: ${response.statusText}`);
     }
 
-    return response.json();
+    const payload = (await response.json()) as {
+        success: boolean;
+        error?: string;
+    };
+    if (!payload.success) {
+        throw new Error(payload.error || "Falha ao salvar configuração");
+    }
+
+    return payload;
 }

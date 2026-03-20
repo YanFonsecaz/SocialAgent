@@ -106,7 +106,9 @@ export function TrendsMaster() {
       await updateTrendsMasterConfig(config);
     } catch (err) {
       console.error(err);
-      setError("Falha ao salvar configuração.");
+      setError(
+        err instanceof Error ? err.message : "Falha ao salvar configuração.",
+      );
     } finally {
       setIsSaving(false);
     }
@@ -305,12 +307,12 @@ export function TrendsMaster() {
                   setConfig((prev) => ({
                     ...prev,
                     emailRecipients: e.target.value
-                      .split("\n")
+                      .split(/[\n,;]+/)
                       .map((line) => line.trim())
                       .filter(Boolean),
                   }))
                 }
-                placeholder="emails (um por linha)"
+                placeholder="emails (um por linha, virgula ou ponto e virgula)"
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm"
               />
 

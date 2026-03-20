@@ -72,6 +72,7 @@ const DEFAULTS: RunOptions = {
     e2eTests: [
         "scripts/e2e-strategist-inlinks.test.ts",
         "scripts/e2e-social-agent.test.ts",
+        "scripts/e2e-content-reviewer.test.ts",
     ],
 };
 
@@ -349,7 +350,9 @@ async function main() {
     }
 
     const serverLogPath =
-        args.get("serverLogPath") ?? DEFAULTS.serverLogPath ?? defaultServerLogPath();
+        args.get("serverLogPath") ??
+        DEFAULTS.serverLogPath ??
+        defaultServerLogPath();
 
     const opts: RunOptions = {
         ...DEFAULTS,

@@ -1,6 +1,7 @@
 import { Elysia } from "elysia";
 import { socialAgentRoutes } from "./routes/social-agent";
 import { strategistInlinks } from "./routes/strategist-inlinks";
+import { contentReviewerRoutes } from "./routes/content-reviewer";
 import { trendsMasterRoutes } from "./routes/trends-master";
 import { envValid } from "../envSchema";
 import { db } from "../db/connection";
@@ -52,6 +53,7 @@ const app = new Elysia()
     })
     .use(socialAgentRoutes)
     .use(strategistInlinks)
+    .use(contentReviewerRoutes)
     .use(trendsMasterRoutes)
     .get("/health/db", async () => {
         try {
