@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
     FileText,
     Upload,
@@ -10,38 +10,14 @@ import {
 } from "lucide-react";
 import clsx from "clsx";
 import {
-    runContentReviewer,
     runContentReviewerCsv,
     fetchContentReviewerTemplate,
     type ContentReviewerResponse,
-    type ContentReviewerRequest,
 } from "../lib/api";
 import { AppHeader } from "./AppHeader";
 
-type Mode = "json" | "csv";
-
-const sampleJson: ContentReviewerRequest = {
-    items: [
-        {
-            url: "https://example.com",
-            contentType: "blog",
-            primaryKeyword: "marketing de conteúdo",
-            supportingKeywords: ["funil", "seo"],
-            expectedWordCount: 1200,
-            outline: ["H2: Introdução", "H2: Estratégia", "H2: Conclusão"],
-            cta: "Baixar ebook",
-            personaPain: "falta de leads qualificados",
-            internalLinksTarget: 3,
-            maxInternalLinks: 12,
-            titleTagExpected: "marketing de conteúdo para empresas",
-        },
-    ],
-    guidelines: "Use um tom claro e objetivo.",
-};
-
 export function ContentReviewer() {
-    const [mode, setMode] = useState<Mode>("csv");
-    const [jsonText, setJsonText] = useState(JSON.stringify(sampleJson, null, 2));
+    const fileInputRef = useRef<HTMLInputElement | null>(null);
     const [csvFile, setCsvFile] = useState<File | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -75,24 +51,6 @@ export function ContentReviewer() {
         }
     };
 
-    const handleSubmitJson = async () => {
-        setError(null);
-        setIsLoading(true);
-        setResult(null);
-
-        try {
-            const parsed = JSON.parse(jsonText) as ContentReviewerRequest;
-            const response = await runContentReviewer(parsed);
-            setResult(response);
-        } catch (err) {
-            const message =
-                err instanceof Error ? err.message : "Falha ao enviar JSON.";
-            setError(message);
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
     const handleSubmitCsv = async () => {
         setError(null);
         setIsLoading(true);
@@ -113,6 +71,10 @@ export function ContentReviewer() {
         }
     };
 
+    const handleOpenFilePicker = () => {
+        fileInputRef.current?.click();
+    };
+
     return (
         <div className="flex flex-col h-screen bg-gray-50 text-gray-900 font-sans">
             <AppHeader />
@@ -126,8 +88,8 @@ export function ContentReviewer() {
                                     Revisor de Conteúdo
                                 </h2>
                                 <p className="text-sm text-gray-500 mt-1">
-                                    Envie um CSV ou JSON com os critérios por URL
-                                    para aprovar ou reprovar conteúdos.
+                                    Envie um CSV com os critérios por URL para
+                                    aprovar ou reprovar conteúdos.
                                 </p>
                             </div>
                             <button
@@ -141,115 +103,59 @@ export function ContentReviewer() {
                         </div>
                     </div>
 
-                    <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-                        <div className="flex border-b border-gray-100">
-                            <button
-                                type="button"
-                                onClick={() => setMode("csv")}
-                                className={clsx(
-                                    "flex-1 px-4 py-3 text-sm font-medium",
-                                    mode === "csv"
-                                        ? "bg-orange-50 text-primary"
-                                        : "text-gray-500 hover:text-gray-700",
-                                )}
-                            >
-                                Upload CSV
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setMode("json")}
-                                className={clsx(
-                                    "flex-1 px-4 py-3 text-sm font-medium",
-                                    mode === "json"
-                                        ? "bg-orange-50 text-primary"
-                                        : "text-gray-500 hover:text-gray-700",
-                                )}
-                            >
-                                Enviar JSON
-                            </button>
-                        </div>
+                    <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 space-y-4">
+                        <button
+                            type="button"
+                            onClick={handleOpenFilePicker}
+                            className="w-full border border-dashed border-gray-200 rounded-lg p-6 text-center hover:border-orange-300 hover:bg-orange-50/40 transition-colors focus:outline-none focus:ring-2 focus:ring-primary/20"
+                        >
+                            <Upload className="w-6 h-6 text-gray-400 mx-auto mb-2" />
+                            <p className="text-sm text-gray-600">
+                                Clique aqui para selecionar um arquivo CSV com os
+                                campos do template.
+                            </p>
+                            <p className="mt-2 text-xs text-gray-500">
+                                {csvFile
+                                    ? `Arquivo selecionado: ${csvFile.name}`
+                                    : "Nenhum arquivo selecionado"}
+                            </p>
+                            <span className="mt-3 inline-flex items-center justify-center px-3 py-1.5 rounded-md text-xs font-medium border border-gray-200 text-gray-600 bg-white">
+                                Selecionar CSV
+                            </span>
+                        </button>
+                        <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept=".csv,text/csv"
+                            onChange={(e) =>
+                                setCsvFile(e.target.files?.[0] || null)
+                            }
+                            className="hidden"
+                        />
 
-                        {mode === "csv" ? (
-                            <div className="p-5 space-y-4">
-                                <div className="border border-dashed border-gray-200 rounded-lg p-6 text-center">
-                                    <Upload className="w-6 h-6 text-gray-400 mx-auto mb-2" />
-                                    <p className="text-sm text-gray-600">
-                                        Selecione um arquivo CSV com os campos do
-                                        template.
-                                    </p>
-                                    <input
-                                        type="file"
-                                        accept=".csv,text/csv"
-                                        onChange={(e) =>
-                                            setCsvFile(
-                                                e.target.files?.[0] || null,
-                                            )
-                                        }
-                                        className="mt-3 text-xs text-gray-500"
-                                    />
-                                    {csvFile && (
-                                        <p className="mt-2 text-xs text-gray-500">
-                                            Arquivo: {csvFile.name}
-                                        </p>
-                                    )}
-                                </div>
-                                <button
-                                    type="button"
-                                    onClick={handleSubmitCsv}
-                                    disabled={isLoading || !csvFile}
-                                    className={clsx(
-                                        "w-full inline-flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg font-medium text-white transition-all shadow-sm",
-                                        isLoading || !csvFile
-                                            ? "bg-gray-300 cursor-not-allowed"
-                                            : "bg-primary hover:bg-orange-600",
-                                    )}
-                                >
-                                    {isLoading ? (
-                                        <>
-                                            <Loader2 className="w-4 h-4 animate-spin" />
-                                            Enviando...
-                                        </>
-                                    ) : (
-                                        <>
-                                            <FileText className="w-4 h-4" />
-                                            Revisar CSV
-                                        </>
-                                    )}
-                                </button>
-                            </div>
-                        ) : (
-                            <div className="p-5 space-y-4">
-                                <textarea
-                                    value={jsonText}
-                                    onChange={(e) => setJsonText(e.target.value)}
-                                    rows={14}
-                                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors text-xs font-mono leading-relaxed"
-                                />
-                                <button
-                                    type="button"
-                                    onClick={handleSubmitJson}
-                                    disabled={isLoading}
-                                    className={clsx(
-                                        "w-full inline-flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg font-medium text-white transition-all shadow-sm",
-                                        isLoading
-                                            ? "bg-gray-300 cursor-not-allowed"
-                                            : "bg-primary hover:bg-orange-600",
-                                    )}
-                                >
-                                    {isLoading ? (
-                                        <>
-                                            <Loader2 className="w-4 h-4 animate-spin" />
-                                            Enviando...
-                                        </>
-                                    ) : (
-                                        <>
-                                            <FileText className="w-4 h-4" />
-                                            Revisar JSON
-                                        </>
-                                    )}
-                                </button>
-                            </div>
-                        )}
+                        <button
+                            type="button"
+                            onClick={handleSubmitCsv}
+                            disabled={isLoading || !csvFile}
+                            className={clsx(
+                                "w-full inline-flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg font-medium text-white transition-all shadow-sm",
+                                isLoading || !csvFile
+                                    ? "bg-gray-300 cursor-not-allowed"
+                                    : "bg-primary hover:bg-orange-600",
+                            )}
+                        >
+                            {isLoading ? (
+                                <>
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                    Enviando...
+                                </>
+                            ) : (
+                                <>
+                                    <FileText className="w-4 h-4" />
+                                    Revisar CSV
+                                </>
+                            )}
+                        </button>
                     </div>
 
                     {error && (
