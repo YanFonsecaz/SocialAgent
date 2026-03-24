@@ -1,15 +1,23 @@
 import OpenAI from "openai";
-import { envValid } from "../envSchema";
+import { getOpenAIApiKey } from "../envSchema";
 
-const client = new OpenAI({
-  apiKey: envValid.OPENAI_API_KEY,
-});
+let client: OpenAI | undefined;
+
+const getClient = (): OpenAI => {
+  if (!client) {
+    client = new OpenAI({
+      apiKey: getOpenAIApiKey(),
+    });
+  }
+
+  return client;
+};
 
 export const EMBEDDING_MODEL = "text-embedding-3-small";
 export const EMBEDDING_DIMENSIONS = 1536;
 
 export const embedText = async (text: string): Promise<number[]> => {
-  const response = await client.embeddings.create({
+  const response = await getClient().embeddings.create({
     model: EMBEDDING_MODEL,
     input: text,
     dimensions: EMBEDDING_DIMENSIONS,
@@ -27,7 +35,7 @@ export const embedText = async (text: string): Promise<number[]> => {
 export const embedBatch = async (texts: string[]): Promise<number[][]> => {
   if (texts.length === 0) return [];
 
-  const response = await client.embeddings.create({
+  const response = await getClient().embeddings.create({
     model: EMBEDDING_MODEL,
     input: texts,
     dimensions: EMBEDDING_DIMENSIONS,

@@ -1,4 +1,4 @@
-import { envValid } from "../../envSchema";
+import { getSerpApiApiKey } from "../../envSchema";
 import { mapWithConcurrency } from "./concurrency";
 import { fetchWithRetry } from "./http-utils";
 import type { TrendsPeriod, TrendItem } from "../types";
@@ -36,7 +36,7 @@ function getPeriodDateParam(periodo: TrendsPeriod): string {
 function buildSerpApiUrl(params: Record<string, string>): string {
   const searchParams = new URLSearchParams({
     ...params,
-    api_key: envValid.SERPAPI_API_KEY,
+    api_key: getSerpApiApiKey(),
   });
   return `${SERPAPI_BASE_URL}?${searchParams.toString()}`;
 }

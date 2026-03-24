@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ChatOpenAI } from "@langchain/openai";
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
+import { getOpenAIApiKey } from "../envSchema";
 import { extractTextFromHtml } from "../use-case/extract-content";
 import { embedBatch, embedText } from "../use-case/embeddings";
 
@@ -101,10 +102,19 @@ const AgentState = Annotation.Root({
 
 type StrategistInlinksState = typeof AgentState.State;
 
-const llm = new ChatOpenAI({
-  model: "gpt-4o-mini",
-  temperature: 0,
-});
+let llm: ChatOpenAI | undefined;
+
+const getLlm = (): ChatOpenAI => {
+  if (!llm) {
+    llm = new ChatOpenAI({
+      apiKey: getOpenAIApiKey(),
+      model: "gpt-4o-mini",
+      temperature: 0,
+    });
+  }
+
+  return llm;
+};
 
 const cosineSimilarity = (a: number[], b: number[]): number => {
   if (a.length !== b.length) {
@@ -375,7 +385,7 @@ const judgeCandidatesNode = async (state: StrategistInlinksState) => {
     ].join("\n");
 
     try {
-      const response = await llm.invoke([
+      const response = await getLlm().invoke([
         { role: "system", content: "Responda apenas JSON válido." },
         { role: "user", content: prompt },
       ]);

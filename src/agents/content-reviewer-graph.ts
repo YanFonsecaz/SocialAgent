@@ -2,6 +2,7 @@ import { z } from "zod";
 import { ChatOpenAI } from "@langchain/openai";
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
 import * as cheerio from "cheerio";
+import { getOpenAIApiKey } from "../envSchema";
 import { extractPageBundleFromUrl } from "../use-case/extract-content";
 import { extractTokenUsage, type TokenUsage } from "../use-case/llm-metrics";
 
@@ -69,10 +70,19 @@ const AgentState = Annotation.Root({
 
 type ContentReviewerState = typeof AgentState.State;
 
-const llm = new ChatOpenAI({
-    model: "gpt-4o-mini",
-    temperature: 0,
-});
+let llm: ChatOpenAI | undefined;
+
+const getLlm = (): ChatOpenAI => {
+    if (!llm) {
+        llm = new ChatOpenAI({
+            apiKey: getOpenAIApiKey(),
+            model: "gpt-4o-mini",
+            temperature: 0,
+        });
+    }
+
+    return llm;
+};
 
 const normalizeUsageTotals = (usage?: {
     tokensIn?: number;
@@ -501,7 +511,7 @@ const reviewNextUrl = async (
             guidelines: state.guidelines,
         });
 
-        const subjectiveResponse = await llm.invoke([
+        const subjectiveResponse = await getLlm().invoke([
             {
                 role: "system",
                 content:

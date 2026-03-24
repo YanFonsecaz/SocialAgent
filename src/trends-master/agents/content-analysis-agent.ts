@@ -1,4 +1,4 @@
-import { envValid } from "../../envSchema";
+import { getOpenAIApiKey } from "../../envSchema";
 import { fetchWithRetry } from "../services/http-utils";
 import type { NewsResult } from "../types";
 import type { TokenUsage } from "../../use-case/llm-metrics";
@@ -50,7 +50,7 @@ async function callOpenAIChat(
     {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${envValid.OPENAI_API_KEY}`,
+        Authorization: `Bearer ${getOpenAIApiKey()}`,
         "Content-Type": "application/json",
       },
       body,

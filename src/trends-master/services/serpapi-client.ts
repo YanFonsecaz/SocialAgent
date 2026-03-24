@@ -1,4 +1,4 @@
-import { envValid } from "../../envSchema";
+import { getSerpApiApiKey } from "../../envSchema";
 import { fetchWithRetry } from "./http-utils";
 
 type SerpApiParams = Record<string, string>;
@@ -22,13 +22,11 @@ export async function fetchSerpApi<T = unknown>(
   params: SerpApiParams,
   options?: { timeoutMs?: number },
 ): Promise<T> {
-  if (!envValid.SERPAPI_API_KEY) {
-    throw new Error("SERPAPI_API_KEY não configurada no ambiente.");
-  }
+  const apiKey = getSerpApiApiKey();
 
   const searchParams = new URLSearchParams({
     ...params,
-    api_key: envValid.SERPAPI_API_KEY,
+    api_key: apiKey,
   });
 
   const cacheKey = getCacheKey(params);

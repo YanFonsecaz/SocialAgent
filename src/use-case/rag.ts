@@ -2,12 +2,20 @@ import OpenAI from "openai";
 import { and, cosineDistance, eq, sql } from "drizzle-orm";
 import { db } from "../db/connection";
 import { storeContent } from "../db/schema/store-content";
-import { envValid } from "../envSchema";
+import { getOpenAIApiKey } from "../envSchema";
 import { embedText } from "./embeddings";
 
-const client = new OpenAI({
-  apiKey: envValid.OPENAI_API_KEY,
-});
+let client: OpenAI | undefined;
+
+const getClient = (): OpenAI => {
+  if (!client) {
+    client = new OpenAI({
+      apiKey: getOpenAIApiKey(),
+    });
+  }
+
+  return client;
+};
 
 export type RetrievedChunk = {
   id: string;
@@ -137,7 +145,7 @@ export const answerWithRag = async (
     maxCharacters: input.maxCharacters,
   });
 
-  const response = await client.chat.completions.create({
+  const response = await getClient().chat.completions.create({
     model: "gpt-4o-mini",
     temperature: 0.2,
     messages: [

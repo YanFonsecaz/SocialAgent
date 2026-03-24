@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ChatOpenAI } from "@langchain/openai";
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
+import { getOpenAIApiKey } from "../envSchema";
 import { embedBatch, embedText } from "../use-case/embeddings";
 import {
     extractTextFromHtml,
@@ -247,17 +248,35 @@ const AgentState = Annotation.Root({
 
 type StrategistInlinksBlockState = typeof AgentState.State;
 
-const llm = new ChatOpenAI({
-    model: "gpt-4o-mini",
-    temperature: 0,
-});
+let llm: ChatOpenAI | undefined;
+
+const getLlm = (): ChatOpenAI => {
+    if (!llm) {
+        llm = new ChatOpenAI({
+            apiKey: getOpenAIApiKey(),
+            model: "gpt-4o-mini",
+            temperature: 0,
+        });
+    }
+
+    return llm;
+};
 
 // Cheap final judge to validate whether the insertion "fits" the block context.
 // Keep temperature at 0 for determinism and avoid verbosity.
-const fitJudgeLlm = new ChatOpenAI({
-    model: "gpt-4o-mini",
-    temperature: 0,
-});
+let fitJudgeLlm: ChatOpenAI | undefined;
+
+const getFitJudgeLlm = (): ChatOpenAI => {
+    if (!fitJudgeLlm) {
+        fitJudgeLlm = new ChatOpenAI({
+            apiKey: getOpenAIApiKey(),
+            model: "gpt-4o-mini",
+            temperature: 0,
+        });
+    }
+
+    return fitJudgeLlm;
+};
 
 const cosineSimilarity = (a: number[], b: number[]): number => {
     if (a.length !== b.length) throw new Error("Embedding length mismatch.");
@@ -558,7 +577,7 @@ const judgeFitForBlock = async (input: {
         .filter(Boolean)
         .join("\n");
 
-    const response = await fitJudgeLlm.invoke([
+    const response = await getFitJudgeLlm().invoke([
         { role: "system", content: "Responda apenas JSON válido." },
         { role: "user", content: prompt },
     ]);
@@ -1297,7 +1316,7 @@ const judgeCandidatesNode = async (state: StrategistInlinksBlockState) => {
                           extraInstruction,
                       ].join("\n")
                     : prompt;
-                return llm.invoke([
+                return getLlm().invoke([
                     { role: "system", content: "Responda apenas JSON válido." },
                     { role: "user", content: retryPrompt },
                 ]);

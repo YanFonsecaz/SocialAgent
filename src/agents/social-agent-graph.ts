@@ -2,6 +2,7 @@ import { z } from "zod";
 import { tool } from "@langchain/core/tools";
 import { ChatOpenAI } from "@langchain/openai";
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
+import { getOpenAIApiKey } from "../envSchema";
 import { extractTextFromHtml } from "../use-case/extract-content";
 import { saveCleanContent } from "../use-case/save-content";
 import { retrieveContext } from "../use-case/rag.ts";
@@ -94,10 +95,19 @@ const retrieveContextTool = tool(
     },
 );
 
-const llm = new ChatOpenAI({
-    model: "gpt-4o-mini",
-    temperature: 0.3,
-});
+let llm: ChatOpenAI | undefined;
+
+const getLlm = (): ChatOpenAI => {
+    if (!llm) {
+        llm = new ChatOpenAI({
+            apiKey: getOpenAIApiKey(),
+            model: "gpt-4o-mini",
+            temperature: 0.3,
+        });
+    }
+
+    return llm;
+};
 
 const normalizeIntent = (
     intent?: string,
@@ -278,7 +288,7 @@ const generateNode = async (state: SocialAgentState) => {
         previousResponse: state.previousResponse,
     });
 
-    const response = await llm.invoke([
+    const response = await getLlm().invoke([
         { role: "system", content: "Siga as instruções e não invente fatos." },
         { role: "user", content: prompt },
     ]);
