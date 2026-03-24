@@ -70,9 +70,9 @@ const DEFAULTS: RunOptions = {
     healthTimeoutMs: 90_000,
     healthPollIntervalMs: 750,
     e2eTests: [
-        "scripts/e2e-strategist-inlinks.test.ts",
-        "scripts/e2e-social-agent.test.ts",
-        "scripts/e2e-content-reviewer.test.ts",
+        "scripts/e2e-authenticated-smoke.test.ts",
+        "scripts/e2e-generation-approval-flow.test.ts",
+        "scripts/e2e-mobile-authenticated.test.ts",
     ],
 };
 
@@ -315,6 +315,8 @@ async function main() {
         "DATABASE_URL",
         "OPENAI_API_KEY",
         "SERPAPI_API_KEY",
+        "APP_BASE_URL",
+        "BETTER_AUTH_SECRET",
         "CORS_ORIGIN",
         "PORT",
         "NODE_ENV",
@@ -325,11 +327,20 @@ async function main() {
         forwardedEnv[k] = process.env[k] ?? fileEnv[k];
     }
 
+    if (!forwardedEnv.APP_BASE_URL) {
+        forwardedEnv.APP_BASE_URL = baseUrl;
+    }
+    if (!forwardedEnv.BETTER_AUTH_SECRET) {
+        forwardedEnv.BETTER_AUTH_SECRET = "e2e-dev-secret";
+    }
+
     // Diagnostics: show where critical vars came from (shell vs file) and their masked values.
     const critical = [
         "DATABASE_URL",
         "OPENAI_API_KEY",
         "SERPAPI_API_KEY",
+        "APP_BASE_URL",
+        "BETTER_AUTH_SECRET",
     ] as const;
     for (const k of critical) {
         const source = envSourceForKey(k, fileEnv);

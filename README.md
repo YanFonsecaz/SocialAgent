@@ -36,13 +36,44 @@ export DATABASE_URL="postgres://postgres:postgres@localhost:5433/social_agent"
 
 > Observação: este repositório valida `DATABASE_URL` como URL. Garanta que a string esteja correta.
 
+### Reset reprodutível de banco (dev)
+
+Para evitar drift de schema local, use:
+
+```bash
+bun run db:reset:dev
+```
+
+Esse comando:
+- remove todas as tabelas do schema `public`;
+- limpa metadata de migrations (`schema drizzle`);
+- garante extensões `vector` e `pgcrypto`;
+- reaplica todas as migrations (`db:migrate`).
+
+Proteções:
+- bloqueia execução com `NODE_ENV=production`;
+- por padrão só permite host local (`localhost`, `127.0.0.1`, `::1`).
+
+Override (somente se você souber o que está fazendo):
+
+```bash
+DB_RESET_ALLOW_NON_LOCAL=true bun run db:reset:dev
+```
+
 ## Configuração do ambiente (desenvolvimento)
 
-Este projeto valida variáveis de ambiente via `src/envSchema.ts`. Para rodar localmente, você precisa definir:
+Este projeto separa validação de env por contexto:
+
+- `src/envSchema.ts` (server/runtime HTTP)
+- `src/envDbSchema.ts` (db-cli/migrations/scripts de banco)
+
+Para rodar backend e frontend localmente, você precisa definir:
 
 - `DATABASE_URL` (Postgres)
 - `OPENAI_API_KEY`
 - `SERPAPI_API_KEY` (necessária pelo schema; se você ainda não usa o recurso, defina um valor válido para passar na validação)
+- `APP_BASE_URL` (ex.: `http://localhost:3333`)
+- `BETTER_AUTH_SECRET` (segredo da sessão/auth)
 - `CORS_ORIGIN` (opcional; default no servidor permite `http://localhost:5173`)
 
 ### Exemplo (macOS / Linux)
@@ -53,6 +84,8 @@ Execute no terminal (substitua pelos seus valores):
 export DATABASE_URL="postgres://postgres:postgres@localhost:5433/social_agent"
 export OPENAI_API_KEY="SUA_OPENAI_API_KEY"
 export SERPAPI_API_KEY="SUA_SERPAPI_API_KEY"
+export APP_BASE_URL="http://localhost:3333"
+export BETTER_AUTH_SECRET="SEU_SEGREDO_FORTE"
 export CORS_ORIGIN="http://localhost:5173"
 ```
 
@@ -62,6 +95,8 @@ export CORS_ORIGIN="http://localhost:5173"
 $env:DATABASE_URL="postgres://postgres:postgres@localhost:5433/social_agent"
 $env:OPENAI_API_KEY="SUA_OPENAI_API_KEY"
 $env:SERPAPI_API_KEY="SUA_SERPAPI_API_KEY"
+$env:APP_BASE_URL="http://localhost:3333"
+$env:BETTER_AUTH_SECRET="SEU_SEGREDO_FORTE"
 $env:CORS_ORIGIN="http://localhost:5173"
 ```
 
@@ -107,18 +142,31 @@ bun run start
 
 ### Opção 1 — rodar E2E com backend já rodando
 
-Com o backend rodando, você pode executar os E2E (smoke):
+Com o backend rodando, você pode executar os E2E:
 
-#### Strategist Inlinks — não inserir links antes do primeiro H2
+#### Smoke autenticado (sessão seeded em DB)
 
 ```bash
-SOCIAL_AGENT_E2E_BASE_URL="http://localhost:3333" bun test scripts/e2e-strategist-inlinks.test.ts
+SOCIAL_AGENT_E2E_BASE_URL="http://localhost:3333" bun test scripts/e2e-authenticated-smoke.test.ts
 ```
 
-#### Social Agent — fluxo ask_later -> opção 1
+#### Fluxo de aprovação pós-geração
+
+```bash
+SOCIAL_AGENT_E2E_BASE_URL="http://localhost:3333" bun test scripts/e2e-generation-approval-flow.test.ts
+```
+
+#### Mobile (viewports 375x812 e 390x844)
+
+```bash
+SOCIAL_AGENT_E2E_BASE_URL="http://localhost:3333" bun test scripts/e2e-mobile-authenticated.test.ts
+```
+
+#### Suítes legadas (opcionais)
 
 ```bash
 SOCIAL_AGENT_E2E_BASE_URL="http://localhost:3333" bun test scripts/e2e-social-agent.test.ts
+SOCIAL_AGENT_E2E_BASE_URL="http://localhost:3333" bun test scripts/e2e-strategist-inlinks.test.ts
 ```
 
 ### Opção 2 — rodar E2E com harness (sobe backend, aguarda health e executa testes)
@@ -126,17 +174,22 @@ SOCIAL_AGENT_E2E_BASE_URL="http://localhost:3333" bun test scripts/e2e-social-ag
 Este projeto inclui um harness local para automatizar:
 
 - subir o backend (sem `--watch`)
-- aguardar o healthcheck (`/health/db`)
+- aguardar servidor ativo (`/`)
 - rodar os testes E2E
 - encerrar o servidor ao final
 
-Rodar todos os E2E padrão:
+Rodar suíte padrão (smoke autenticado):
 
 ```bash
 bun run test:e2e:local
 ```
 
-Rodar apenas um teste específico:
+A suíte padrão agora cobre:
+- smoke autenticado;
+- fluxo de aprovação pós-geração;
+- navegação mobile autenticada (375x812 e 390x844).
+
+Rodar testes específicos:
 
 ```bash
 bun run test:e2e:local -- --tests scripts/e2e-strategist-inlinks.test.ts

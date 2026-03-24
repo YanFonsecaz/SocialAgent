@@ -3,6 +3,7 @@ import { ChatOpenAI } from "@langchain/openai";
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
 import * as cheerio from "cheerio";
 import { extractPageBundleFromUrl } from "../use-case/extract-content";
+import { extractTokenUsage, type TokenUsage } from "../use-case/llm-metrics";
 
 export type ContentReviewItem = {
     url: string;
@@ -36,6 +37,7 @@ export type ContentReviewResult = {
     approved: number;
     rejected: number;
     errors: number;
+    usage?: TokenUsage;
 };
 
 const DecisionSchema = z.object({
@@ -56,6 +58,13 @@ const AgentState = Annotation.Root({
         reducer: (a, b) => a.concat(b),
         default: () => [],
     }),
+    usageTotals: Annotation<{ tokensIn: number; tokensOut: number }>({
+        reducer: (a, b) => ({
+            tokensIn: (a?.tokensIn ?? 0) + (b?.tokensIn ?? 0),
+            tokensOut: (a?.tokensOut ?? 0) + (b?.tokensOut ?? 0),
+        }),
+        default: () => ({ tokensIn: 0, tokensOut: 0 }),
+    }),
 });
 
 type ContentReviewerState = typeof AgentState.State;
@@ -64,6 +73,46 @@ const llm = new ChatOpenAI({
     model: "gpt-4o-mini",
     temperature: 0,
 });
+
+const normalizeUsageTotals = (usage?: {
+    tokensIn?: number;
+    tokensOut?: number;
+}): TokenUsage | undefined => {
+    const tokensIn = usage?.tokensIn ?? 0;
+    const tokensOut = usage?.tokensOut ?? 0;
+    if (tokensIn <= 0 && tokensOut <= 0) {
+        return undefined;
+    }
+    return {
+        tokensIn: tokensIn > 0 ? tokensIn : undefined,
+        tokensOut: tokensOut > 0 ? tokensOut : undefined,
+        totalTokens: tokensIn + tokensOut,
+    };
+};
+
+const parseSubjectiveResponse = (
+    value: unknown,
+): z.infer<typeof SubjectiveSchema> | null => {
+    if (typeof value !== "string") {
+        return null;
+    }
+
+    const jsonMatch = value.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+        return null;
+    }
+
+    try {
+        const parsedJson = JSON.parse(jsonMatch[0]);
+        const parsed = SubjectiveSchema.safeParse(parsedJson);
+        if (!parsed.success) {
+            return null;
+        }
+        return parsed.data;
+    } catch {
+        return null;
+    }
+};
 
 const normalizeText = (value: string): string =>
     value.toLowerCase().replace(/\s+/g, " ").trim();
@@ -431,6 +480,11 @@ const reviewNextUrl = async (
     }
 
     try {
+        let usageTotals = {
+            tokensIn: 0,
+            tokensOut: 0,
+        };
+
         const page = await extractPageBundleFromUrl(item.url);
         const rules = evaluateRules({
             item,
@@ -447,9 +501,28 @@ const reviewNextUrl = async (
             guidelines: state.guidelines,
         });
 
-        const subjective = await llm
-            .withStructuredOutput(SubjectiveSchema)
-            .invoke(prompt);
+        const subjectiveResponse = await llm.invoke([
+            {
+                role: "system",
+                content:
+                    'Responda apenas JSON válido no formato {"ok": boolean, "reason": "..."}',
+            },
+            { role: "user", content: prompt },
+        ]);
+        const usage = extractTokenUsage(subjectiveResponse);
+        usageTotals = {
+            tokensIn: usage?.tokensIn ?? 0,
+            tokensOut: usage?.tokensOut ?? 0,
+        };
+        const rawContent =
+            typeof subjectiveResponse.content === "string"
+                ? subjectiveResponse.content
+                : "";
+        const parsedSubjective = parseSubjectiveResponse(rawContent);
+        const subjective = parsedSubjective ?? {
+            ok: false,
+            reason: "Falha ao interpretar resposta do modelo.",
+        };
 
         const failures = [...rules.failures];
         if (!subjective.ok) {
@@ -471,6 +544,7 @@ const reviewNextUrl = async (
         return {
             currentIndex: index + 1,
             results: [decision],
+            usageTotals,
         };
     } catch (error) {
         const reason =
@@ -523,5 +597,6 @@ export const runContentReviewerGraph = async (
         approved,
         rejected,
         errors,
+        usage: normalizeUsageTotals(output.usageTotals),
     };
 };

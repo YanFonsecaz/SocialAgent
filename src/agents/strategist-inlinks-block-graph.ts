@@ -12,6 +12,7 @@ import {
     isLaterStageOrPrereqHeavy,
     anchorContainsDistinctiveToken,
 } from "../use-case/inlinks/heuristics";
+import { extractTokenUsage, type TokenUsage } from "../use-case/llm-metrics";
 
 type AnchorHint = {
     anchor: string;
@@ -127,12 +128,50 @@ export type StrategistInlinksBlockResult = {
         candidatesAnalyzed: number;
         eligibleBlocks: number;
     };
+    usage?: TokenUsage;
 };
 
 type CandidateItem = {
     url: string;
     content: string;
     score: number;
+};
+
+type UsageTotals = {
+    tokensIn: number;
+    tokensOut: number;
+};
+
+const emptyUsageTotals = (): UsageTotals => ({
+    tokensIn: 0,
+    tokensOut: 0,
+});
+
+const addUsageToTotals = (
+    totals: UsageTotals,
+    usage: TokenUsage | null | undefined,
+): void => {
+    if (!usage) {
+        return;
+    }
+
+    const tokensIn = usage.tokensIn ?? 0;
+    const tokensOut = usage.tokensOut ?? 0;
+
+    totals.tokensIn += Number.isFinite(tokensIn) ? tokensIn : 0;
+    totals.tokensOut += Number.isFinite(tokensOut) ? tokensOut : 0;
+};
+
+const toTokenUsage = (totals: UsageTotals): TokenUsage | undefined => {
+    if (totals.tokensIn <= 0 && totals.tokensOut <= 0) {
+        return undefined;
+    }
+
+    return {
+        tokensIn: totals.tokensIn > 0 ? totals.tokensIn : undefined,
+        tokensOut: totals.tokensOut > 0 ? totals.tokensOut : undefined,
+        totalTokens: totals.tokensIn + totals.tokensOut,
+    };
 };
 
 const DecisionSchema = z.object({
@@ -197,6 +236,13 @@ const AgentState = Annotation.Root({
     maxCandidates: Annotation<number | undefined>(),
     similarityThreshold: Annotation<number | undefined>(),
     maxLinks: Annotation<number | undefined>(),
+    usageTotals: Annotation<UsageTotals>({
+        reducer: (a, b) => ({
+            tokensIn: (a?.tokensIn ?? 0) + (b?.tokensIn ?? 0),
+            tokensOut: (a?.tokensOut ?? 0) + (b?.tokensOut ?? 0),
+        }),
+        default: emptyUsageTotals,
+    }),
 });
 
 type StrategistInlinksBlockState = typeof AgentState.State;
@@ -469,12 +515,13 @@ const judgeFitForBlock = async (input: {
     anchorText: string;
     originalBlockText: string;
     modifiedBlockText: string;
-}): Promise<{ ok: boolean; reason: string }> => {
+}): Promise<{ ok: boolean; reason: string; usage?: TokenUsage | null }> => {
     // Quick, cheap hard checks before LLM:
     if (!ensureNoHtmlAnchors(input.modifiedBlockText)) {
         return {
             ok: false,
             reason: "Inserção rejeitada: o bloco modificado contém HTML (<a href=...>), permitido apenas Markdown.",
+            usage: null,
         };
     }
 
@@ -515,6 +562,7 @@ const judgeFitForBlock = async (input: {
         { role: "system", content: "Responda apenas JSON válido." },
         { role: "user", content: prompt },
     ]);
+    const usage = extractTokenUsage(response);
 
     const raw = typeof response.content === "string" ? response.content : "";
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
@@ -525,10 +573,14 @@ const judgeFitForBlock = async (input: {
         return {
             ok: false,
             reason: "Inserção rejeitada: verificador final retornou JSON inválido.",
+            usage,
         };
     }
 
-    return parsed.data;
+    return {
+        ...parsed.data,
+        usage,
+    };
 };
 
 const normalizeForSlug = (value: string): string =>
@@ -1039,6 +1091,7 @@ const anchorTokenOverlap = (
 const judgeCandidatesNode = async (state: StrategistInlinksBlockState) => {
     const edits: BlockEdit[] = [];
     const rejected: Array<{ url: string; reason: string; score?: number }> = [];
+    const usageTotals = emptyUsageTotals();
 
     const hasBlocks = (state.principalBlocks?.length ?? 0) > 0;
 
@@ -1251,6 +1304,7 @@ const judgeCandidatesNode = async (state: StrategistInlinksBlockState) => {
             };
 
             const response = await invokeOnce();
+            addUsageToTotals(usageTotals, extractTokenUsage(response));
 
             const raw =
                 typeof response.content === "string" ? response.content : "";
@@ -1268,6 +1322,10 @@ const judgeCandidatesNode = async (state: StrategistInlinksBlockState) => {
                 // Single retry: ask for strictly valid JSON only.
                 const retryJsonResponse = await invokeOnce(
                     "Sua resposta anterior não era JSON válido. Responda SOMENTE com JSON válido seguindo exatamente o schema solicitado, sem texto extra.",
+                );
+                addUsageToTotals(
+                    usageTotals,
+                    extractTokenUsage(retryJsonResponse),
                 );
                 const retryRaw =
                     typeof retryJsonResponse.content === "string"
@@ -1389,6 +1447,7 @@ const judgeCandidatesNode = async (state: StrategistInlinksBlockState) => {
                         `A URL do link deve ser exatamente: ${candidate.url}`,
                     ].join(" "),
                 );
+                addUsageToTotals(usageTotals, extractTokenUsage(retry));
                 const retryRaw =
                     typeof retry.content === "string" ? retry.content : "";
                 const retryJsonMatch = retryRaw.match(/\{[\s\S]*\}/);
@@ -1426,6 +1485,7 @@ const judgeCandidatesNode = async (state: StrategistInlinksBlockState) => {
                                 originalBlockText: bestBlock.text,
                                 modifiedBlockText: modified,
                             });
+                            addUsageToTotals(usageTotals, fit.usage);
 
                             if (!fit.ok) {
                                 rejected.push({
@@ -1511,6 +1571,7 @@ const judgeCandidatesNode = async (state: StrategistInlinksBlockState) => {
                                 originalBlockText: bestBlock.text,
                                 modifiedBlockText: modified,
                             });
+                            addUsageToTotals(usageTotals, fit.usage);
 
                             if (!fit.ok) {
                                 rejected.push({
@@ -1677,6 +1738,7 @@ const judgeCandidatesNode = async (state: StrategistInlinksBlockState) => {
                 originalBlockText: decision.original_block_text,
                 modifiedBlockText: decision.modified_block_text,
             });
+            addUsageToTotals(usageTotals, finalFit.usage);
 
             if (!finalFit.ok) {
                 rejected.push({
@@ -1715,7 +1777,7 @@ const judgeCandidatesNode = async (state: StrategistInlinksBlockState) => {
         }
     }
 
-    return { edits, rejected };
+    return { edits, rejected, usageTotals };
 };
 
 export const strategistInlinksBlockGraph = new StateGraph(AgentState)
@@ -1763,5 +1825,6 @@ export const runStrategistInlinksBlockGraph = async (
                     !b.containsLink,
             ).length,
         },
+        usage: toTokenUsage(result.usageTotals ?? emptyUsageTotals()),
     };
 };

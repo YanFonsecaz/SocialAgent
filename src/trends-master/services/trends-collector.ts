@@ -1,7 +1,7 @@
 import { envValid } from "../../envSchema";
 import { mapWithConcurrency } from "./concurrency";
 import { fetchWithRetry } from "./http-utils";
-import { TrendsPeriod, TrendItem } from "../types";
+import type { TrendsPeriod, TrendItem } from "../types";
 import { validateTrendRelevance } from "../agents/content-analysis-agent";
 
 const SERPAPI_BASE_URL = "https://serpapi.com/search";

@@ -61,6 +61,6 @@ export const TrendsRunResponseSchema = z.object({
   success: z.boolean(),
   report: TrendsReportSchema.optional(),
   error: z.string().optional(),
-  details: z.unknown().optional(),
+  generationId: z.string().optional(),
 });
 export type TrendsRunResponse = z.infer<typeof TrendsRunResponseSchema>;

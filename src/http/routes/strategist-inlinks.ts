@@ -13,22 +13,15 @@ import {
     type InlinksBlock,
 } from "../../use-case/inlinks/paragraphs";
 import { applyBlockEditsToHtml } from "../../use-case/inlinks/apply-edits";
-
-const isDev = (): boolean => {
-    const env = (Bun.env.NODE_ENV ?? "").toLowerCase();
-    return env !== "production";
-};
-
-const serializeErrorForClient = (error: unknown) => {
-    if (error instanceof Error) {
-        return {
-            name: error.name,
-            message: error.message,
-            stack: error.stack,
-        };
-    }
-    return { message: String(error) };
-};
+import {
+    resolveAuthContext,
+    unauthorizedResponse,
+} from "../plugins/auth-guard";
+import { logLlmGeneration } from "../../use-case/log-generation";
+import { buildGenerationMetrics } from "../../use-case/llm-metrics";
+import { createApiErrorResponse } from "../error-response";
+import { getRequestId } from "../request-context";
+import { UnsafeUrlError } from "../../security/ssrf";
 
 const normalizeUrl = (value: string): string => {
     const u = new URL(value);
@@ -96,8 +89,14 @@ const toPrincipalBlocks = (
 
 export const strategistInlinks = new Elysia().post(
     "/strategist/inlinks",
-    async ({ body }) => {
+    async ({ body, request }) => {
+        const requestId = getRequestId(request);
         const { urlPrincipal, urlsAnalise } = body;
+        const authContext = await resolveAuthContext(request);
+        if (!authContext) {
+            return unauthorizedResponse();
+        }
+        const startedAt = Date.now();
 
         try {
             // 1) Normalize, dedupe, and block auto-link
@@ -112,7 +111,7 @@ export const strategistInlinks = new Elysia().post(
 
             // 2) Extract and persist principal content (RAG store)
             const principalText = await extractTextFromHtml(urlPrincipal);
-            await saveCleanContent(urlPrincipal, principalText);
+            await saveCleanContent(authContext.userId, urlPrincipal, principalText);
 
             // 3) Extract principal HTML (Readability) and parse blocks (source of truth for editing)
             const principalHtml = await extractHtmlFromUrl(urlPrincipal);
@@ -152,6 +151,7 @@ export const strategistInlinks = new Elysia().post(
 
             // 6) Persist selected URLs (compat: keep old table shape)
             const rows = graphResult.edits.map((item) => ({
+                userId: authContext.userId,
                 principalUrl: urlPrincipal,
                 analysisUrl: item.targetUrl,
                 sentence: item.modifiedBlockText,
@@ -170,8 +170,27 @@ export const strategistInlinks = new Elysia().post(
                               anchor: strategistInlinksTable.anchor,
                           });
 
+            const generationId = await logLlmGeneration({
+                userId: authContext.userId,
+                tool: "strategist-inlinks",
+                model: "gpt-4o-mini",
+                prompt: JSON.stringify(body),
+                output: JSON.stringify({
+                    totalSelecionadas: graphResult.edits.length,
+                    totalPersistidas: inserted.length,
+                }),
+                status: "draft",
+                ...buildGenerationMetrics({
+                    tool: "strategist-inlinks",
+                    startedAt,
+                    model: "gpt-4o-mini",
+                    usage: graphResult.usage,
+                }),
+            });
+
             // 7) Response: new contract includes blocks + edits for debugging/UX
             return {
+                generationId,
                 message: "Inlinks analisados com sucesso",
                 principalUrl: urlPrincipal,
                 totalAnalise: filteredAnalysisUrls.length,
@@ -207,16 +226,21 @@ export const strategistInlinks = new Elysia().post(
         } catch (error) {
             console.error("Falha ao processar inlinks:", error);
 
-            const payload = isDev()
-                ? {
-                      error: "Falha ao processar as URLs",
-                      details: serializeErrorForClient(error),
-                  }
-                : { error: "Falha ao processar as URLs" };
+            if (error instanceof UnsafeUrlError) {
+                return createApiErrorResponse({
+                    status: 422,
+                    code: "INVALID_URL_TARGET",
+                    message: error.message,
+                    requestId,
+                });
+            }
 
-            return new Response(JSON.stringify(payload), {
+            return createApiErrorResponse({
                 status: 500,
-                headers: { "Content-Type": "application/json" },
+                code: "STRATEGIST_INLINKS_FAILED",
+                message: "Falha ao processar as URLs.",
+                requestId,
+                details: error,
             });
         }
     },

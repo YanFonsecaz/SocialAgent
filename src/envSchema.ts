@@ -5,6 +5,8 @@ const envSchema = z.object({
   OPENAI_API_KEY: z.string().min(1),
   SERPAPI_API_KEY: z.string().min(1),
   CORS_ORIGIN: z.string().min(1).optional(),
+  APP_BASE_URL: z.url().min(1),
+  BETTER_AUTH_SECRET: z.string().min(1),
 
   SMTP_HOST: z.string().min(1).optional(),
   SMTP_PORT: z.string().min(1).optional(),

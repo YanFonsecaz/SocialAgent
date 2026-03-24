@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { createMemo, createSignal } from "solid-js";
 import {
     FileText,
     Upload,
@@ -7,7 +7,7 @@ import {
     XCircle,
     AlertCircle,
     Loader2,
-} from "lucide-react";
+} from "lucide-solid";
 import clsx from "clsx";
 import {
     runContentReviewerCsv,
@@ -15,23 +15,29 @@ import {
     type ContentReviewerResponse,
 } from "../lib/api";
 import { AppHeader } from "./AppHeader";
+import { GenerationApprovalCard } from "./GenerationApprovalCard";
 
 export function ContentReviewer() {
-    const fileInputRef = useRef<HTMLInputElement | null>(null);
-    const [csvFile, setCsvFile] = useState<File | null>(null);
-    const [isLoading, setIsLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [result, setResult] = useState<ContentReviewerResponse | null>(null);
+    let fileInputRef: HTMLInputElement | undefined;
 
-    const totals = useMemo(() => {
-        if (!result) return null;
+    const [csvFile, setCsvFile] = createSignal<File | null>(null);
+    const [isLoading, setIsLoading] = createSignal(false);
+    const [error, setError] = createSignal<string | null>(null);
+    const [result, setResult] = createSignal<ContentReviewerResponse | null>(null);
+    const [latestGenerationId, setLatestGenerationId] = createSignal<
+        string | null
+    >(null);
+
+    const totals = createMemo(() => {
+        const current = result();
+        if (!current) return null;
         return {
-            total: result.total ?? result.results.length,
-            approved: result.approved ?? 0,
-            rejected: result.rejected ?? 0,
-            errors: result.errors ?? 0,
+            total: current.total ?? current.results.length,
+            approved: current.approved ?? 0,
+            rejected: current.rejected ?? 0,
+            errors: current.errors ?? 0,
         };
-    }, [result]);
+    });
 
     const handleDownloadTemplate = async () => {
         setError(null);
@@ -55,13 +61,15 @@ export function ContentReviewer() {
         setError(null);
         setIsLoading(true);
         setResult(null);
+        setLatestGenerationId(null);
 
         try {
-            if (!csvFile) {
+            if (!csvFile()) {
                 throw new Error("Selecione um arquivo CSV.");
             }
-            const response = await runContentReviewerCsv(csvFile);
+            const response = await runContentReviewerCsv(csvFile() as File);
             setResult(response);
+            setLatestGenerationId(response.generationId ?? null);
         } catch (err) {
             const message =
                 err instanceof Error ? err.message : "Falha ao enviar CSV.";
@@ -72,54 +80,56 @@ export function ContentReviewer() {
     };
 
     const handleOpenFilePicker = () => {
-        fileInputRef.current?.click();
+        fileInputRef?.click();
     };
 
     return (
-        <div className="flex flex-col h-screen bg-gray-50 text-gray-900 font-sans">
+        <div class="flex flex-col h-screen bg-gray-50 text-gray-900 font-sans">
             <AppHeader />
 
-            <main className="flex-1 overflow-y-auto">
-                <div className="max-w-6xl mx-auto p-4 md:p-8 space-y-6">
-                    <div className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm">
-                        <div className="flex items-start justify-between gap-4">
+            <main class="flex-1 overflow-y-auto">
+                <div class="max-w-6xl mx-auto p-4 md:p-8 space-y-6">
+                    <GenerationApprovalCard generationId={latestGenerationId()} />
+
+                    <div class="bg-white rounded-xl border border-gray-100 p-5 shadow-sm">
+                        <div class="flex items-start justify-between gap-4">
                             <div>
-                                <h2 className="text-lg font-semibold text-gray-900">
+                                <h2 class="text-lg font-semibold text-gray-900">
                                     Revisor de Conteúdo
                                 </h2>
-                                <p className="text-sm text-gray-500 mt-1">
+                                <p class="text-sm text-gray-500 mt-1">
                                     Envie um CSV com os critérios por URL para
                                     aprovar ou reprovar conteúdos.
                                 </p>
                             </div>
                             <button
                                 type="button"
-                                onClick={handleDownloadTemplate}
-                                className="inline-flex items-center gap-2 text-xs font-medium text-primary bg-orange-50 border border-orange-100 px-3 py-2 rounded-md hover:bg-orange-100"
+                                onClick={() => void handleDownloadTemplate()}
+                                class="inline-flex items-center gap-2 text-xs font-medium text-primary bg-orange-50 border border-orange-100 px-3 py-2 rounded-md hover:bg-orange-100"
                             >
-                                <Download className="w-4 h-4" />
+                                <Download class="w-4 h-4" />
                                 Baixar template CSV
                             </button>
                         </div>
                     </div>
 
-                    <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 space-y-4">
+                    <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-5 space-y-4">
                         <button
                             type="button"
                             onClick={handleOpenFilePicker}
-                            className="w-full border border-dashed border-gray-200 rounded-lg p-6 text-center hover:border-orange-300 hover:bg-orange-50/40 transition-colors focus:outline-none focus:ring-2 focus:ring-primary/20"
+                            class="w-full border border-dashed border-gray-200 rounded-lg p-6 text-center hover:border-orange-300 hover:bg-orange-50/40 transition-colors focus:outline-none focus:ring-2 focus:ring-primary/20"
                         >
-                            <Upload className="w-6 h-6 text-gray-400 mx-auto mb-2" />
-                            <p className="text-sm text-gray-600">
+                            <Upload class="w-6 h-6 text-gray-400 mx-auto mb-2" />
+                            <p class="text-sm text-gray-600">
                                 Clique aqui para selecionar um arquivo CSV com os
                                 campos do template.
                             </p>
-                            <p className="mt-2 text-xs text-gray-500">
-                                {csvFile
-                                    ? `Arquivo selecionado: ${csvFile.name}`
+                            <p class="mt-2 text-xs text-gray-500">
+                                {csvFile()
+                                    ? `Arquivo selecionado: ${csvFile()!.name}`
                                     : "Nenhum arquivo selecionado"}
                             </p>
-                            <span className="mt-3 inline-flex items-center justify-center px-3 py-1.5 rounded-md text-xs font-medium border border-gray-200 text-gray-600 bg-white">
+                            <span class="mt-3 inline-flex items-center justify-center px-3 py-1.5 rounded-md text-xs font-medium border border-gray-200 text-gray-600 bg-white">
                                 Selecionar CSV
                             </span>
                         </button>
@@ -127,143 +137,139 @@ export function ContentReviewer() {
                             ref={fileInputRef}
                             type="file"
                             accept=".csv,text/csv"
-                            onChange={(e) =>
-                                setCsvFile(e.target.files?.[0] || null)
+                            onChange={(event) =>
+                                setCsvFile(
+                                    (event.currentTarget as HTMLInputElement).files?.[0] ||
+                                        null,
+                                )
                             }
-                            className="hidden"
+                            class="hidden"
                         />
 
                         <button
                             type="button"
-                            onClick={handleSubmitCsv}
-                            disabled={isLoading || !csvFile}
-                            className={clsx(
+                            onClick={() => void handleSubmitCsv()}
+                            disabled={isLoading() || !csvFile()}
+                            class={clsx(
                                 "w-full inline-flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg font-medium text-white transition-all shadow-sm",
-                                isLoading || !csvFile
+                                isLoading() || !csvFile()
                                     ? "bg-gray-300 cursor-not-allowed"
                                     : "bg-primary hover:bg-orange-600",
                             )}
                         >
-                            {isLoading ? (
+                            {isLoading() ? (
                                 <>
-                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                    <Loader2 class="w-4 h-4 animate-spin" />
                                     Enviando...
                                 </>
                             ) : (
                                 <>
-                                    <FileText className="w-4 h-4" />
+                                    <FileText class="w-4 h-4" />
                                     Revisar CSV
                                 </>
                             )}
                         </button>
                     </div>
 
-                    {error && (
-                        <div className="bg-red-50 border border-red-100 rounded-xl p-4 text-red-800 flex items-start gap-2">
-                            <AlertCircle className="w-4 h-4 mt-0.5" />
-                            <p className="text-sm">{error}</p>
+                    {error() && (
+                        <div class="bg-red-50 border border-red-100 rounded-xl p-4 text-red-800 flex items-start gap-2">
+                            <AlertCircle class="w-4 h-4 mt-0.5" />
+                            <p class="text-sm">{error()}</p>
                         </div>
                     )}
 
-                    {result && totals && (
-                        <div className="space-y-4">
-                            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                                <div className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm">
-                                    <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                    {result() && totals() && (
+                        <div class="space-y-4">
+                            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                                <div class="bg-white rounded-xl border border-gray-100 p-5 shadow-sm">
+                                    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">
                                         Total
                                     </p>
-                                    <p className="text-3xl font-bold text-gray-900 mt-1">
-                                        {totals.total}
+                                    <p class="text-3xl font-bold text-gray-900 mt-1">
+                                        {totals()!.total}
                                     </p>
                                 </div>
-                                <div className="bg-white rounded-xl border border-green-100 p-5 shadow-sm">
-                                    <p className="text-xs font-semibold text-green-600 uppercase tracking-wider">
+                                <div class="bg-white rounded-xl border border-green-100 p-5 shadow-sm">
+                                    <p class="text-xs font-semibold text-green-600 uppercase tracking-wider">
                                         Aprovados
                                     </p>
-                                    <p className="text-3xl font-bold text-green-700 mt-1">
-                                        {totals.approved}
+                                    <p class="text-3xl font-bold text-green-700 mt-1">
+                                        {totals()!.approved}
                                     </p>
                                 </div>
-                                <div className="bg-white rounded-xl border border-red-100 p-5 shadow-sm">
-                                    <p className="text-xs font-semibold text-red-600 uppercase tracking-wider">
+                                <div class="bg-white rounded-xl border border-red-100 p-5 shadow-sm">
+                                    <p class="text-xs font-semibold text-red-600 uppercase tracking-wider">
                                         Reprovados
                                     </p>
-                                    <p className="text-3xl font-bold text-red-700 mt-1">
-                                        {totals.rejected}
+                                    <p class="text-3xl font-bold text-red-700 mt-1">
+                                        {totals()!.rejected}
                                     </p>
                                 </div>
-                                <div className="bg-white rounded-xl border border-amber-100 p-5 shadow-sm">
-                                    <p className="text-xs font-semibold text-amber-600 uppercase tracking-wider">
+                                <div class="bg-white rounded-xl border border-amber-100 p-5 shadow-sm">
+                                    <p class="text-xs font-semibold text-amber-600 uppercase tracking-wider">
                                         Erros Técnicos
                                     </p>
-                                    <p className="text-3xl font-bold text-amber-700 mt-1">
-                                        {totals.errors}
+                                    <p class="text-3xl font-bold text-amber-700 mt-1">
+                                        {totals()!.errors}
                                     </p>
                                 </div>
                             </div>
 
-                            <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-                                <div className="p-5 border-b border-gray-50">
-                                    <h3 className="text-sm font-semibold text-gray-900">
+                            <div class="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+                                <div class="p-5 border-b border-gray-50">
+                                    <h3 class="text-sm font-semibold text-gray-900">
                                         Resultado por URL
                                     </h3>
                                 </div>
-                                <div className="overflow-x-auto">
-                                    <table className="w-full text-sm">
+                                <div class="overflow-x-auto">
+                                    <table class="w-full text-sm">
                                         <thead>
-                                            <tr className="bg-gray-50 text-left">
-                                                <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                                            <tr class="bg-gray-50 text-left">
+                                                <th class="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                                                     URL
                                                 </th>
-                                                <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                                                <th class="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                                                     Status
                                                 </th>
-                                                <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                                                <th class="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                                                     Motivo
                                                 </th>
                                             </tr>
                                         </thead>
-                                        <tbody className="divide-y divide-gray-50">
-                                            {result.results.map((item, idx) => (
+                                        <tbody class="divide-y divide-gray-50">
+                                            {result()!.results.map((item) => (
                                                 <tr
-                                                    key={`${item.url}-${idx}`}
-                                                    className="hover:bg-gray-50/50 transition-colors"
+                                                    class="hover:bg-gray-50/50 transition-colors"
                                                 >
-                                                    <td className="px-5 py-4 text-xs text-gray-600 break-all">
+                                                    <td class="px-5 py-4 text-xs text-gray-600 break-all">
                                                         {item.url}
                                                     </td>
-                                                    <td className="px-5 py-4">
+                                                    <td class="px-5 py-4">
                                                         <span
-                                                            className={clsx(
+                                                            class={clsx(
                                                                 "inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium",
-                                                                item.status ===
-                                                                    "approved"
+                                                                item.status === "approved"
                                                                     ? "bg-green-50 text-green-700"
-                                                                    : item.status ===
-                                                                        "rejected"
+                                                                    : item.status === "rejected"
                                                                       ? "bg-red-50 text-red-700"
                                                                       : "bg-amber-50 text-amber-700",
                                                             )}
                                                         >
-                                                            {item.status ===
-                                                            "approved" ? (
-                                                                <CheckCircle2 className="w-3 h-3" />
-                                                            ) : item.status ===
-                                                              "rejected" ? (
-                                                                <XCircle className="w-3 h-3" />
+                                                            {item.status === "approved" ? (
+                                                                <CheckCircle2 class="w-3 h-3" />
+                                                            ) : item.status === "rejected" ? (
+                                                                <XCircle class="w-3 h-3" />
                                                             ) : (
-                                                                <AlertCircle className="w-3 h-3" />
+                                                                <AlertCircle class="w-3 h-3" />
                                                             )}
-                                                            {item.status ===
-                                                            "approved"
+                                                            {item.status === "approved"
                                                                 ? "Aprovado"
-                                                                : item.status ===
-                                                                    "rejected"
+                                                                : item.status === "rejected"
                                                                   ? "Reprovado"
                                                                   : "Erro Técnico"}
                                                         </span>
                                                     </td>
-                                                    <td className="px-5 py-4 text-xs text-gray-600">
+                                                    <td class="px-5 py-4 text-xs text-gray-600">
                                                         {item.reason}
                                                     </td>
                                                 </tr>

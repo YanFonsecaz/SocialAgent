@@ -29,6 +29,13 @@
       "when": 1771594232074,
       "tag": "0003_violet_glorian",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1774201980000,
+      "tag": "0004_better_auth_user_scope",
+      "breakpoints": true
     }
   ]
 }

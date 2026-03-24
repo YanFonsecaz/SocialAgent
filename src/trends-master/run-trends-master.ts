@@ -1,4 +1,4 @@
-import {
+import type {
   TrendsConfig,
   TrendsReport,
   PeriodData,
@@ -10,6 +10,7 @@ import { fetchNews } from "./services/news-fetcher";
 import { summarizeTrends } from "./agents/content-analysis-agent";
 import { createReport } from "./services/report-generator";
 import { sendEmail } from "./services/email-sender";
+import type { TokenUsage } from "../use-case/llm-metrics";
 
 const PERIOD_LABELS: Record<TrendsPeriod, string> = {
   diario: "Diário",
@@ -18,8 +19,8 @@ const PERIOD_LABELS: Record<TrendsPeriod, string> = {
 };
 
 type TrendsRunResult =
-  | { success: true; report: TrendsReport }
-  | { success: false; error: string; details?: unknown };
+  | { success: true; report: TrendsReport; usage?: TokenUsage }
+  | { success: false; error: string };
 
 export async function runTrendsMasterPipeline(
   config: TrendsConfig,
@@ -116,14 +117,14 @@ export async function runTrendsMasterPipeline(
     }
 
     console.log("[Trends Master] Gerando resumo com LLM");
-    const summary = await summarizeTrends(config.sector, allNews);
+    const summaryResult = await summarizeTrends(config.sector, allNews);
 
     const reportTitle =
       config.customTopics && config.customTopics.length > 0
         ? config.customTopics.join(", ")
         : config.sector;
 
-    const report = createReport(reportTitle, periodsData, summary);
+    const report = createReport(reportTitle, periodsData, summaryResult.summary);
 
     console.log("[Trends Master] Relatório gerado");
 
@@ -142,14 +143,13 @@ export async function runTrendsMasterPipeline(
 
     console.log(`[Trends Master] Pipeline concluída em ${durationSec}s`);
 
-    return { success: true, report };
+    return { success: true, report, usage: summaryResult.usage };
   } catch (error) {
     console.error("[Trends Master] Erro na pipeline:", error);
 
     return {
       success: false,
       error: error instanceof Error ? error.message : "Erro desconhecido",
-      details: error,
     };
   }
 }

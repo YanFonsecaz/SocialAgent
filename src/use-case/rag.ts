@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import { cosineDistance, sql } from "drizzle-orm";
+import { and, cosineDistance, eq, sql } from "drizzle-orm";
 import { db } from "../db/connection";
 import { storeContent } from "../db/schema/store-content";
 import { envValid } from "../envSchema";
@@ -17,6 +17,7 @@ export type RetrievedChunk = {
 };
 
 export type RagQueryInput = {
+  userId: string;
   query: string;
   limit?: number;
   tone?: string;
@@ -32,6 +33,7 @@ export type RagQueryResult = {
 };
 
 export const retrieveContext = async (
+  userId: string,
   query: string,
   limit = 5,
   url?: string,
@@ -47,7 +49,12 @@ export const retrieveContext = async (
       similarity,
     })
     .from(storeContent)
-    .where(url ? sql`${storeContent.url} = ${url}` : undefined)
+    .where(
+      and(
+        eq(storeContent.userId, userId),
+        url ? eq(storeContent.url, url) : undefined,
+      ),
+    )
     .orderBy((t) => sql`${t.similarity} DESC`)
     .limit(limit);
 
@@ -114,7 +121,11 @@ export const answerWithRag = async (
     throw new Error("Consulta vazia. Forneça uma pergunta válida.");
   }
 
-  const rows = await retrieveContext(input.query, input.limit ?? 5);
+  const rows = await retrieveContext(
+    input.userId,
+    input.query,
+    input.limit ?? 5,
+  );
   const context = rows.map((row) => row.content).join("\n\n");
 
   const prompt = buildRagPrompt({

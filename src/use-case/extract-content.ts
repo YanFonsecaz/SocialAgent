@@ -1,6 +1,7 @@
 import * as cheerio from "cheerio";
 import { JSDOM } from "jsdom";
 import { Readability } from "@mozilla/readability";
+import { assertSafeExternalUrl } from "../security/ssrf";
 
 export type ExtractedPageMetadata = {
     url: string;
@@ -162,12 +163,15 @@ export const extractPageBundleFromUrl = async (
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-        const rawHtml = await fetchRawHtml(urlContent, controller.signal);
-        const { text, html } = extractTextAndHtmlFromRawHtml(rawHtml, urlContent);
-        const metadata = extractMetadataFromRawHtml(rawHtml, urlContent);
+        const safeUrl = await assertSafeExternalUrl(urlContent);
+        const normalizedUrl = safeUrl.toString();
+
+        const rawHtml = await fetchRawHtml(normalizedUrl, controller.signal);
+        const { text, html } = extractTextAndHtmlFromRawHtml(rawHtml, normalizedUrl);
+        const metadata = extractMetadataFromRawHtml(rawHtml, normalizedUrl);
 
         return {
-            url: urlContent,
+            url: normalizedUrl,
             text,
             html,
             metadata,

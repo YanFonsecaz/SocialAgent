@@ -1,6 +1,7 @@
 import { envValid } from "../../envSchema";
 import { fetchWithRetry } from "../services/http-utils";
 import type { NewsResult } from "../types";
+import type { TokenUsage } from "../../use-case/llm-metrics";
 
 type ChatMessage = {
   role: "system" | "user" | "assistant";
@@ -13,6 +14,11 @@ type OpenAIChatResponse = {
       content?: string;
     };
   }>;
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+  };
 };
 
 const OPENAI_ENDPOINT = "https://api.openai.com/v1/chat/completions";
@@ -26,7 +32,7 @@ type LlmOptions = {
 async function callOpenAIChat(
   messages: ChatMessage[],
   options: LlmOptions = {},
-): Promise<string> {
+): Promise<{ content: string; usage?: TokenUsage }> {
   const {
     model = "gpt-4o-mini",
     temperature = 0.2,
@@ -57,13 +63,24 @@ async function callOpenAIChat(
     },
   );
 
-  return response?.choices?.[0]?.message?.content?.trim() ?? "";
+  const content = response?.choices?.[0]?.message?.content?.trim() ?? "";
+  const usage: TokenUsage | undefined =
+    response?.usage?.prompt_tokens !== undefined ||
+    response?.usage?.completion_tokens !== undefined
+      ? {
+          tokensIn: response.usage?.prompt_tokens,
+          tokensOut: response.usage?.completion_tokens,
+          totalTokens: response.usage?.total_tokens,
+        }
+      : undefined;
+
+  return { content, usage };
 }
 
 export async function summarizeTrends(
   sector: string,
   allNews: NewsResult[],
-): Promise<string> {
+): Promise<{ summary: string; usage?: TokenUsage }> {
   try {
     const bullets: string[] = [];
 
@@ -91,7 +108,7 @@ export async function summarizeTrends(
       bullets.join("\n"),
     ].join("\n");
 
-    const content = await callOpenAIChat(
+    const result = await callOpenAIChat(
       [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
@@ -99,10 +116,15 @@ export async function summarizeTrends(
       { temperature: 0.2, timeoutMs: 15000 },
     );
 
-    return content || "Resumo não disponível.";
+    return {
+      summary: result.content || "Resumo não disponível.",
+      usage: result.usage,
+    };
   } catch (error) {
     console.error("[Trends Summarizer] Erro ao gerar resumo:", error);
-    return "Resumo não disponível: erro ao processar com LLM.";
+    return {
+      summary: "Resumo não disponível: erro ao processar com LLM.",
+    };
   }
 }
 
@@ -128,7 +150,7 @@ export async function summarizeArticle(content: string): Promise<string> {
       { model: "gpt-4o-mini", temperature: 0.1, timeoutMs: 10000 },
     );
 
-    return summary.trim();
+    return summary.content.trim();
   } catch (error) {
     console.warn("[Summarizer] Falha ao resumir artigo:", error);
     return "";
@@ -159,7 +181,7 @@ export async function validateTrendRelevance(
       { model: "gpt-4o-mini", temperature: 0.0, timeoutMs: 10000 },
     );
 
-    return content.trim().toUpperCase().includes("SIM");
+    return content.content.trim().toUpperCase().includes("SIM");
   } catch (error) {
     console.warn(
       `[Summarizer] Erro ao validar tendência "${term}":`,

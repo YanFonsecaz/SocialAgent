@@ -1,7 +1,7 @@
 import { db } from "../db/connection";
 import { storeContent } from "../db/schema";
 import { embedBatch } from "./embeddings";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 const chunkText = (text: string, maxChars = 1000): string[] => {
   const chunks: string[] = [];
@@ -15,14 +15,20 @@ const chunkText = (text: string, maxChars = 1000): string[] => {
   return chunks;
 };
 
-export const saveCleanContent = async (url: string, content: string) => {
+export const saveCleanContent = async (
+  userId: string,
+  url: string,
+  content: string,
+) => {
   const trimmed = content.trim();
   if (!trimmed) {
     throw new Error("Conteúdo vazio para salvar.");
   }
 
   // 1. Clean old content for this URL
-  await db.delete(storeContent).where(eq(storeContent.url, url));
+  await db
+    .delete(storeContent)
+    .where(and(eq(storeContent.userId, userId), eq(storeContent.url, url)));
 
   const chunks = chunkText(trimmed, 1000);
   const embeddings = await embedBatch(chunks);
@@ -38,6 +44,7 @@ export const saveCleanContent = async (url: string, content: string) => {
     }
 
     return {
+      userId,
       url,
       content: chunk,
       embedding,

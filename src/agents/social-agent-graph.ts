@@ -5,6 +5,7 @@ import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
 import { extractTextFromHtml } from "../use-case/extract-content";
 import { saveCleanContent } from "../use-case/save-content";
 import { retrieveContext } from "../use-case/rag.ts";
+import { extractTokenUsage, type TokenUsage } from "../use-case/llm-metrics";
 
 const IntentSchema = z.enum([
     "ask_later",
@@ -32,6 +33,7 @@ const IntentChoiceSchema = z.enum([
 ]);
 
 type SocialAgentInput = {
+    userId: string;
     url: string;
     intent?: string;
     query?: string;
@@ -41,6 +43,7 @@ type SocialAgentInput = {
 };
 
 const AgentState = Annotation.Root({
+    userId: Annotation<string>(),
     url: Annotation<string>(),
     intent: Annotation<string | undefined>(),
     intentNormalized: Annotation<z.infer<typeof IntentSchema> | undefined>(),
@@ -51,28 +54,30 @@ const AgentState = Annotation.Root({
     content: Annotation<string | undefined>(),
     response: Annotation<string | undefined>(),
     sources: Annotation<string[] | undefined>(),
+    usage: Annotation<TokenUsage | undefined>(),
 });
 
 type SocialAgentState = typeof AgentState.State;
 
 const extractContentTool = tool(
-    async ({ url }) => {
+    async ({ userId, url }) => {
         const content = await extractTextFromHtml(url);
-        await saveCleanContent(url, content);
+        await saveCleanContent(userId, url, content);
         return { content };
     },
     {
         name: "extract_url_content",
         description: "Extrai e salva o conteúdo limpo de uma URL.",
         schema: z.object({
+            userId: z.string().min(1),
             url: z.string().url(),
         }),
     },
 );
 
 const retrieveContextTool = tool(
-    async ({ query, limit, url }) => {
-        const rows = await retrieveContext(query, limit ?? 5, url);
+    async ({ userId, query, limit, url }) => {
+        const rows = await retrieveContext(userId, query, limit ?? 5, url);
         const context = rows.map((row) => row.content).join("\n\n");
         const sources = rows.map((row) => row.url);
         return { context, sources };
@@ -81,6 +86,7 @@ const retrieveContextTool = tool(
         name: "retrieve_context",
         description: "Recupera contexto relevante do banco vetorial.",
         schema: z.object({
+            userId: z.string().min(1),
             query: z.string().min(1),
             limit: z.number().int().positive().max(20).optional(),
             url: z.string().url().optional(),
@@ -227,10 +233,11 @@ const buildGenerationPrompt = (input: {
 };
 
 const extractNode = async (state: SocialAgentState) => {
-    const { url, intent, query, tone, feedback, previousResponse } = state;
+    const { userId, url, intent, query, tone, feedback, previousResponse } =
+        state;
     const normalized = normalizeIntent(intent);
 
-    const result = await extractContentTool.invoke({ url });
+    const result = await extractContentTool.invoke({ userId, url });
 
     return {
         content: result.content,
@@ -254,6 +261,7 @@ const generateNode = async (state: SocialAgentState) => {
     }
 
     const retrieval = await retrieveContextTool.invoke({
+        userId: state.userId,
         query: state.query || state.intent || "resuma o conteúdo",
         limit: 5,
         url: state.url,
@@ -274,10 +282,12 @@ const generateNode = async (state: SocialAgentState) => {
         { role: "system", content: "Siga as instruções e não invente fatos." },
         { role: "user", content: prompt },
     ]);
+    const usage = extractTokenUsage(response) ?? undefined;
 
     return {
         response: response.content ?? "",
         sources,
+        usage,
     };
 };
 
@@ -300,6 +310,7 @@ export const runSocialAgent = async (
     input: SocialAgentInput,
 ): Promise<SocialAgentState> => {
     return socialAgentGraph.invoke({
+        userId: input.userId,
         url: input.url,
         intent: input.intent,
         query: input.query,

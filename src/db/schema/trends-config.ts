@@ -1,7 +1,11 @@
 import { pgTable, text, integer, boolean, timestamp, jsonb } from "drizzle-orm/pg-core";
+import { authUsers } from "./auth";
 
 export const trendsConfig = pgTable("trends_config", {
-  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .primaryKey()
+    .notNull()
+    .references(() => authUsers.id, { onDelete: "cascade" }),
   sector: text("sector").notNull(),
   periods: jsonb("periods").notNull(),
   topN: integer("top_n").notNull(),

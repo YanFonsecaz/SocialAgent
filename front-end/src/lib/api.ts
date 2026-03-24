@@ -6,6 +6,188 @@ const API_BASE_URL =
     import.meta.env.VITE_API_BASE_URL ??
     (import.meta.env.DEV ? "http://localhost:3333" : "");
 
+export class UnauthorizedError extends Error {
+    constructor() {
+        super("UNAUTHORIZED");
+    }
+}
+
+type ApiFetchOptions = RequestInit & {
+    suppressUnauthorizedRedirect?: boolean;
+};
+
+async function apiFetch(
+    path: string,
+    options: ApiFetchOptions = {},
+): Promise<Response> {
+    const { suppressUnauthorizedRedirect, ...requestInit } = options;
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+        credentials: "include",
+        ...requestInit,
+    });
+
+    if (response.status === 401) {
+        if (
+            !suppressUnauthorizedRedirect &&
+            typeof window !== "undefined" &&
+            window.location.pathname !== "/login"
+        ) {
+            window.location.href = "/login";
+        }
+        throw new UnauthorizedError();
+    }
+
+    return response;
+}
+
+export interface AuthRequestMagicLinkInput {
+    email: string;
+}
+
+export interface AuthVerifyMagicLinkInput {
+    token: string;
+    callbackURL?: string;
+}
+
+export interface AuthSessionResponse {
+    authenticated: boolean;
+    user?: {
+        id: string;
+        email: string;
+        name?: string;
+    };
+}
+
+export type LlmGenerationStatus = "draft" | "approved";
+
+export interface LlmGeneration {
+    id: string;
+    userId: string;
+    tool: string;
+    model?: string;
+    prompt?: string;
+    output?: string;
+    status: LlmGenerationStatus;
+    tokensIn?: number;
+    tokensOut?: number;
+    latencyMs?: number;
+    costUsd?: string;
+    createdAt: string;
+    approvedAt?: string;
+}
+
+export interface LlmGenerationListResponse {
+    items: LlmGeneration[];
+    page: number;
+    pageSize: number;
+    total: number;
+}
+
+export interface LlmGenerationListFilters {
+    tool?: string;
+    status?: LlmGenerationStatus;
+    from?: string;
+    to?: string;
+    page?: number;
+    pageSize?: number;
+}
+
+export async function requestMagicLink(
+    data: AuthRequestMagicLinkInput,
+): Promise<{ success: boolean; message?: string }> {
+    const response = await apiFetch("/auth/magic-link/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+        suppressUnauthorizedRedirect: true,
+    });
+
+    if (!response.ok) {
+        throw new Error(`Error: ${response.statusText}`);
+    }
+
+    return response.json();
+}
+
+export async function verifyMagicLink(
+    data: AuthVerifyMagicLinkInput,
+): Promise<AuthSessionResponse> {
+    const response = await apiFetch("/auth/magic-link/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+        suppressUnauthorizedRedirect: true,
+    });
+
+    if (!response.ok) {
+        throw new Error(`Error: ${response.statusText}`);
+    }
+
+    return response.json();
+}
+
+export async function getAuthSession(): Promise<AuthSessionResponse> {
+    const response = await apiFetch("/auth/session", {
+        suppressUnauthorizedRedirect: true,
+    });
+
+    if (!response.ok) {
+        throw new Error(`Error: ${response.statusText}`);
+    }
+
+    return response.json();
+}
+
+export async function logout(): Promise<{ success: boolean }> {
+    const response = await apiFetch("/auth/logout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+    });
+
+    if (!response.ok) {
+        throw new Error(`Error: ${response.statusText}`);
+    }
+
+    return response.json();
+}
+
+export async function listLlmGenerations(
+    filters: LlmGenerationListFilters = {},
+): Promise<LlmGenerationListResponse> {
+    const search = new URLSearchParams();
+    if (filters.tool) search.set("tool", filters.tool);
+    if (filters.status) search.set("status", filters.status);
+    if (filters.from) search.set("from", filters.from);
+    if (filters.to) search.set("to", filters.to);
+    search.set("page", String(filters.page ?? 1));
+    search.set("pageSize", String(filters.pageSize ?? 20));
+
+    const response = await apiFetch(`/llm/generations?${search.toString()}`);
+    if (!response.ok) {
+        throw new Error(`Error: ${response.statusText}`);
+    }
+
+    return response.json();
+}
+
+export async function approveLlmGeneration(
+    generationId: string,
+): Promise<{ success: boolean; generation: LlmGeneration }> {
+    const response = await apiFetch(`/llm/generations/${generationId}/status`, {
+        method: "PATCH",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ status: "approved" }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`Error: ${response.statusText}`);
+    }
+
+    return response.json();
+}
+
 // ---- Social Agent API ----
 
 export interface SocialAgentRequest {
@@ -18,6 +200,7 @@ export interface SocialAgentRequest {
 }
 
 export interface SocialAgentResponse {
+    generationId?: string;
     response: string;
     sources: string[];
 }
@@ -26,7 +209,7 @@ export interface SocialAgentResponse {
 export async function runSocialAgent(
     data: SocialAgentRequest,
 ): Promise<SocialAgentResponse> {
-    const response = await fetch(`${API_BASE_URL}/social-agent`, {
+    const response = await apiFetch(`/social-agent`, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
@@ -109,6 +292,7 @@ export interface ApplyEditsStats {
 }
 
 export interface StrategistInlinksResponse {
+    generationId?: string;
     message: string;
     principalUrl: string;
     totalAnalise: number;
@@ -135,7 +319,7 @@ export interface StrategistInlinksResponse {
 export async function runStrategistInlinks(
     data: StrategistInlinksRequest,
 ): Promise<StrategistInlinksResponse> {
-    const response = await fetch(`${API_BASE_URL}/strategist/inlinks`, {
+    const response = await apiFetch(`/strategist/inlinks`, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
@@ -178,6 +362,7 @@ export interface ContentReviewerDecision {
 }
 
 export interface ContentReviewerResponse {
+    generationId?: string;
     message: string;
     results: ContentReviewerDecision[];
     total: number;
@@ -190,11 +375,24 @@ async function parseApiError(response: Response): Promise<string> {
     let fallback = `Error: ${response.statusText}`;
     try {
         const data = (await response.json()) as {
-            error?: string;
+            error?:
+                | string
+                | {
+                      code?: string;
+                      message?: string;
+                  };
             details?: unknown;
+            success?: boolean;
         };
-        if (data?.error && typeof data.error === "string") {
+        if (typeof data?.error === "string" && data.error.trim().length > 0) {
             fallback = data.error;
+        } else if (
+            data?.error &&
+            typeof data.error === "object" &&
+            typeof data.error.message === "string" &&
+            data.error.message.trim().length > 0
+        ) {
+            fallback = data.error.message;
         }
     } catch {
         // Ignore JSON parse errors and keep fallback status text.
@@ -206,7 +404,7 @@ async function parseApiError(response: Response): Promise<string> {
 export async function runContentReviewer(
     data: ContentReviewerRequest,
 ): Promise<ContentReviewerResponse> {
-    const response = await fetch(`${API_BASE_URL}/strategist/content-reviewer`, {
+    const response = await apiFetch(`/strategist/content-reviewer`, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
@@ -223,9 +421,7 @@ export async function runContentReviewer(
 
 /** Baixa o template CSV de revisão de conteúdo. */
 export async function fetchContentReviewerTemplate(): Promise<string> {
-    const response = await fetch(
-        `${API_BASE_URL}/strategist/content-reviewer/template`,
-    );
+    const response = await apiFetch(`/strategist/content-reviewer/template`);
 
     if (!response.ok) {
         throw new Error(`Error: ${response.statusText}`);
@@ -241,7 +437,7 @@ export async function runContentReviewerCsv(
     const form = new FormData();
     form.append("file", file);
 
-    const response = await fetch(`${API_BASE_URL}/strategist/content-reviewer`, {
+    const response = await apiFetch(`/strategist/content-reviewer`, {
         method: "POST",
         body: form,
     });
@@ -299,13 +495,13 @@ export interface TrendsRunResponse {
     success: boolean;
     report?: TrendsReport;
     error?: string;
-    details?: unknown;
+    generationId?: string;
 }
 
 export async function runTrendsMaster(
     data: TrendsConfig,
 ): Promise<TrendsRunResponse> {
-    const response = await fetch(`${API_BASE_URL}/api/trends-master/run`, {
+    const response = await apiFetch(`/api/trends-master/run`, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
@@ -314,7 +510,7 @@ export async function runTrendsMaster(
     });
 
     if (!response.ok) {
-        throw new Error(`Error: ${response.statusText}`);
+        throw new Error(await parseApiError(response));
     }
 
     return response.json();
@@ -324,10 +520,10 @@ export async function getTrendsMasterConfig(): Promise<{
     success: boolean;
     config: TrendsConfig;
 }> {
-    const response = await fetch(`${API_BASE_URL}/api/trends-master/config`);
+    const response = await apiFetch(`/api/trends-master/config`);
 
     if (!response.ok) {
-        throw new Error(`Error: ${response.statusText}`);
+        throw new Error(await parseApiError(response));
     }
 
     return response.json();
@@ -336,7 +532,7 @@ export async function getTrendsMasterConfig(): Promise<{
 export async function updateTrendsMasterConfig(
     data: TrendsConfig,
 ): Promise<{ success: boolean; error?: string }> {
-    const response = await fetch(`${API_BASE_URL}/api/trends-master/config`, {
+    const response = await apiFetch(`/api/trends-master/config`, {
         method: "PUT",
         headers: {
             "Content-Type": "application/json",
@@ -345,7 +541,7 @@ export async function updateTrendsMasterConfig(
     });
 
     if (!response.ok) {
-        throw new Error(`Error: ${response.statusText}`);
+        throw new Error(await parseApiError(response));
     }
 
     const payload = (await response.json()) as {

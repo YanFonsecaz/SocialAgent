@@ -23,6 +23,10 @@ services:
         sync: false
       - key: SERPAPI_API_KEY
         sync: false
+      - key: APP_BASE_URL
+        sync: false
+      - key: BETTER_AUTH_SECRET
+        sync: false
 
       # Optional
       - key: CORS_ORIGIN
@@ -44,4 +48,24 @@ services:
       - key: EMAIL_PROVIDER_API_KEY
         sync: false
       - key: EMAIL_API_PROVIDER
+        sync: false
+  - type: cron
+    name: socialagent-retention-cleanup
+    env: docker
+    schedule: "0 3 * * *"
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    startCommand: "bun run cleanup:retention"
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: SERPAPI_API_KEY
+        sync: false
+      - key: APP_BASE_URL
+        sync: false
+      - key: BETTER_AUTH_SECRET
         sync: false

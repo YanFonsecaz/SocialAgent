@@ -4,22 +4,15 @@ import {
     runContentReviewerGraph,
     type ContentReviewItem,
 } from "../../agents/content-reviewer-graph";
-
-const isDev = (): boolean => {
-    const env = (Bun.env.NODE_ENV ?? "").toLowerCase();
-    return env !== "production";
-};
-
-const serializeErrorForClient = (error: unknown) => {
-    if (error instanceof Error) {
-        return {
-            name: error.name,
-            message: error.message,
-            stack: error.stack,
-        };
-    }
-    return { message: String(error) };
-};
+import {
+    resolveAuthContext,
+    unauthorizedResponse,
+} from "../plugins/auth-guard";
+import { logLlmGeneration } from "../../use-case/log-generation";
+import { buildGenerationMetrics } from "../../use-case/llm-metrics";
+import { createApiErrorResponse } from "../error-response";
+import { UnsafeUrlError } from "../../security/ssrf";
+import { getRequestId } from "../request-context";
 
 const normalizeUrl = (value: string): string => {
     const u = new URL(value);
@@ -275,7 +268,14 @@ export const contentReviewerRoutes = new Elysia()
         });
     })
     .post("/strategist/content-reviewer", async ({ request }) => {
+        const requestId = getRequestId(request);
         try {
+            const authContext = await resolveAuthContext(request);
+            if (!authContext) {
+                return unauthorizedResponse();
+            }
+            const startedAt = Date.now();
+
             const contentType = request.headers.get("content-type") ?? "";
             const isJson = contentType.includes("application/json");
 
@@ -288,7 +288,31 @@ export const contentReviewerRoutes = new Elysia()
                 guidelines,
             });
 
+            const generationId = await logLlmGeneration({
+                userId: authContext.userId,
+                tool: "content-reviewer",
+                model: "gpt-4o-mini",
+                prompt: JSON.stringify({
+                    itemsCount: items.length,
+                    guidelines: guidelines ?? "",
+                }),
+                output: JSON.stringify({
+                    total: review.total,
+                    approved: review.approved,
+                    rejected: review.rejected,
+                    errors: review.errors,
+                }),
+                status: "draft",
+                ...buildGenerationMetrics({
+                    tool: "content-reviewer",
+                    startedAt,
+                    model: "gpt-4o-mini",
+                    usage: review.usage,
+                }),
+            });
+
             return {
+                generationId,
                 message: "Conteúdo revisado com sucesso",
                 results: review.results,
                 total: review.total,
@@ -300,28 +324,30 @@ export const contentReviewerRoutes = new Elysia()
             console.error("Falha ao revisar conteúdo:", error);
 
             if (error instanceof z.ZodError) {
-                return new Response(
-                    JSON.stringify({
-                        error: "Falha ao validar payload de revisão",
-                        details: error.issues,
-                    }),
-                    {
-                        status: 422,
-                        headers: { "Content-Type": "application/json" },
-                    },
-                );
+                return createApiErrorResponse({
+                    status: 422,
+                    code: "VALIDATION_ERROR",
+                    message: "Falha ao validar payload de revisão.",
+                    requestId,
+                    details: error.issues,
+                });
             }
 
-            const payload = isDev()
-                ? {
-                      error: "Falha ao revisar conteúdo",
-                      details: serializeErrorForClient(error),
-                  }
-                : { error: "Falha ao revisar conteúdo" };
+            if (error instanceof UnsafeUrlError) {
+                return createApiErrorResponse({
+                    status: 422,
+                    code: "INVALID_URL_TARGET",
+                    message: error.message,
+                    requestId,
+                });
+            }
 
-            return new Response(JSON.stringify(payload), {
+            return createApiErrorResponse({
                 status: 500,
-                headers: { "Content-Type": "application/json" },
+                code: "CONTENT_REVIEWER_FAILED",
+                message: "Falha ao revisar conteúdo.",
+                requestId,
+                details: error,
             });
         }
     });
