@@ -41,8 +41,13 @@ type ErrorWithDetails =
       }
     | unknown;
 
+type StrategistSourceType = "url" | "manual";
+
 export function StrategistInlinks() {
+    const [sourceType, setSourceType] =
+        createSignal<StrategistSourceType>("url");
     const [principalUrl, setPrincipalUrl] = createSignal("");
+    const [manualContent, setManualContent] = createSignal("");
     const [urlsText, setUrlsText] = createSignal("");
     const [isLoading, setIsLoading] = createSignal(false);
     const [error, setError] = createSignal<string | null>(null);
@@ -70,6 +75,15 @@ export function StrategistInlinks() {
 
     const validUrls = createMemo(() => parseUrls(urlsText()));
     const validUrlCount = createMemo(() => validUrls().length);
+    const isUrlSource = createMemo(() => sourceType() === "url");
+    const isManualSource = createMemo(() => sourceType() === "manual");
+    const normalizedPrincipalUrl = createMemo(() => principalUrl().trim());
+    const normalizedManualContent = createMemo(() => manualContent().trim());
+    const canSubmit = createMemo(() =>
+        isUrlSource()
+            ? normalizedPrincipalUrl().length > 0 && validUrlCount() > 0
+            : normalizedManualContent().length > 0 && validUrlCount() > 0,
+    );
 
     const stringifyMaybeErrorDetails = (err: ErrorWithDetails): string | null => {
         if (!err || typeof err !== "object") return null;
@@ -101,7 +115,7 @@ export function StrategistInlinks() {
     const handleSubmit = async (e: SubmitEvent) => {
         e.preventDefault();
 
-        if (!principalUrl() || validUrls().length === 0) return;
+        if (!canSubmit()) return;
 
         setError(null);
         setErrorDetails(null);
@@ -110,10 +124,22 @@ export function StrategistInlinks() {
         setLatestGenerationId(null);
 
         try {
-            const response = await runStrategistInlinks({
-                urlPrincipal: principalUrl(),
-                urlsAnalise: validUrls(),
-            });
+            const response = await runStrategistInlinks(
+                isManualSource()
+                    ? {
+                          sourceType: "manual",
+                          conteudoPrincipal: normalizedManualContent(),
+                          urlsAnalise: validUrls(),
+                          ...(normalizedPrincipalUrl()
+                              ? { urlPrincipal: normalizedPrincipalUrl() }
+                              : {}),
+                      }
+                    : {
+                          sourceType: "url",
+                          urlPrincipal: normalizedPrincipalUrl(),
+                          urlsAnalise: validUrls(),
+                      },
+            );
             setResult(response);
             setLatestGenerationId(response.generationId ?? null);
         } catch (err) {
@@ -155,15 +181,13 @@ export function StrategistInlinks() {
     const buildHighlightedHtml = (
         html: string,
         items: StrategistInlinksResponse["selecionadas"],
-        mode: "original" | "linked" | "modified",
+        mode: "original" | "modified",
     ): string => {
         if (!html) return "";
         const className =
             mode === "original"
                 ? "inlink-highlight-original"
-                : mode === "modified"
-                  ? "inlink-highlight-modified"
-                  : "inlink-highlight-linked";
+                : "inlink-highlight-modified";
 
         const sanitized = sanitizeHtml(html);
 
@@ -264,16 +288,6 @@ export function StrategistInlinks() {
         );
     });
 
-    const linkedHtml = createMemo(() => {
-        const current = result();
-        if (!current) return "";
-        return buildHighlightedHtml(
-            current.linkedContent,
-            current.selecionadas,
-            "linked",
-        );
-    });
-
     const modifiedHtml = createMemo(() => {
         const current = result();
         if (!current) return "";
@@ -282,6 +296,17 @@ export function StrategistInlinks() {
             current.selecionadas,
             "modified",
         );
+    });
+
+    const shouldRenderPrincipalAsUrl = createMemo(() => {
+        const current = result();
+        if (!current) return false;
+        try {
+            const parsed = new URL(current.principalUrl);
+            return parsed.protocol === "http:" || parsed.protocol === "https:";
+        } catch {
+            return false;
+        }
     });
 
     return (
@@ -312,16 +337,68 @@ export function StrategistInlinks() {
                             onSubmit={handleSubmit}
                             class="flex flex-col gap-4"
                         >
+                            <div class="space-y-2">
+                                <p class="text-sm font-medium text-gray-700">
+                                    Fonte do conteúdo principal{" "}
+                                    <span class="text-red-500">*</span>
+                                </p>
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    <label
+                                        for="source-url"
+                                        class={clsx(
+                                            "flex items-center gap-2 rounded-lg border px-3 py-2 text-sm cursor-pointer transition-colors",
+                                            isUrlSource()
+                                                ? "border-primary bg-orange-50 text-primary"
+                                                : "border-gray-200 text-gray-600 hover:border-gray-300",
+                                        )}
+                                    >
+                                        <input
+                                            id="source-url"
+                                            type="radio"
+                                            name="source-type"
+                                            checked={isUrlSource()}
+                                            onChange={() => setSourceType("url")}
+                                            class="accent-primary"
+                                        />
+                                        Usar URL principal
+                                    </label>
+                                    <label
+                                        for="source-manual"
+                                        class={clsx(
+                                            "flex items-center gap-2 rounded-lg border px-3 py-2 text-sm cursor-pointer transition-colors",
+                                            isManualSource()
+                                                ? "border-primary bg-orange-50 text-primary"
+                                                : "border-gray-200 text-gray-600 hover:border-gray-300",
+                                        )}
+                                    >
+                                        <input
+                                            id="source-manual"
+                                            type="radio"
+                                            name="source-type"
+                                            checked={isManualSource()}
+                                            onChange={() => setSourceType("manual")}
+                                            class="accent-primary"
+                                        />
+                                        Usar conteúdo digitado
+                                    </label>
+                                </div>
+                            </div>
+
                             <div class="space-y-1">
                                 <label for="principal-url" class="text-sm font-medium text-gray-700">
-                                    URL Principal <span class="text-red-500">*</span>
+                                    URL Principal{" "}
+                                    {isUrlSource() ? (
+                                        <span class="text-red-500">*</span>
+                                    ) : (
+                                        <span class="text-gray-400">(opcional)</span>
+                                    )}
                                 </label>
                                 <div class="relative">
                                     <Globe class="absolute left-3 top-2.5 w-4 h-4 text-gray-400" />
                                     <input
                                         id="principal-url"
                                         type="url"
-                                        required
+                                        required={isUrlSource()}
                                         placeholder="https://exemplo.com/artigo-principal"
                                         value={principalUrl()}
                                         onInput={(e) =>
@@ -333,9 +410,42 @@ export function StrategistInlinks() {
                                     />
                                 </div>
                                 <p class="text-xs text-gray-400">
-                                    Página que receberá os links internos.
+                                    {isUrlSource()
+                                        ? "Página que receberá os links internos."
+                                        : "Opcional no modo manual. Se informado, evita auto-link para a própria URL."}
                                 </p>
                             </div>
+
+                            {isManualSource() && (
+                                <div class="space-y-1">
+                                    <label for="manual-content" class="text-sm font-medium text-gray-700">
+                                        Conteúdo digitado{" "}
+                                        <span class="text-red-500">*</span>
+                                    </label>
+                                    <p class="text-xs text-gray-400 mb-2">
+                                        Insira o conteúdo principal em texto puro (quebras de linha são preservadas).
+                                    </p>
+                                    <textarea
+                                        id="manual-content"
+                                        required={isManualSource()}
+                                        placeholder={
+                                            "Digite aqui o conteúdo principal para mapeamento de inlinks..."
+                                        }
+                                        value={manualContent()}
+                                        onInput={(e) =>
+                                            setManualContent(
+                                                (e.currentTarget as HTMLTextAreaElement).value,
+                                            )
+                                        }
+                                        rows={10}
+                                        maxLength={50000}
+                                        class="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors text-sm leading-relaxed resize-y"
+                                    />
+                                    <p class="text-xs text-gray-400">
+                                        {manualContent().length.toLocaleString("pt-BR")} / 50.000 caracteres
+                                    </p>
+                                </div>
+                            )}
 
                             <div class="space-y-1">
                                 <div class="flex items-center justify-between">
@@ -379,10 +489,10 @@ export function StrategistInlinks() {
 
                             <button
                                 type="submit"
-                                disabled={isLoading() || !principalUrl() || validUrlCount() === 0}
+                                disabled={isLoading() || !canSubmit()}
                                 class={clsx(
                                     "mt-4 w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg font-medium text-white transition-all shadow-sm hover:shadow-md",
-                                    isLoading() || !principalUrl() || validUrlCount() === 0
+                                    isLoading() || !canSubmit()
                                         ? "bg-gray-300 cursor-not-allowed"
                                         : "bg-primary hover:bg-orange-600 active:scale-[0.98]",
                                 )}
@@ -409,8 +519,7 @@ export function StrategistInlinks() {
                                 Como funciona
                             </h3>
                             <p class="text-xs text-orange-700 leading-relaxed">
-                                Informe a URL principal e as URLs satélites para identificar
-                                oportunidades de linking interno com sugestões de âncoras.
+                                Escolha entre URL principal ou conteúdo digitado e informe as URLs satélites para identificar oportunidades de linking interno.
                             </p>
                         </div>
                     </div>
@@ -431,8 +540,7 @@ export function StrategistInlinks() {
                                     Strategist Inlinks
                                 </h3>
                                 <p class="max-w-md mx-auto">
-                                    Identifique oportunidades de linking interno com uma URL
-                                    principal e URLs satélites.
+                                    Identifique oportunidades de linking interno usando URL principal ou conteúdo digitado com URLs satélites.
                                 </p>
                             </div>
                         )}
@@ -570,29 +678,33 @@ export function StrategistInlinks() {
                                     <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">
                                         URL Principal
                                     </p>
-                                    <a
-                                        href={result()!.principalUrl}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        class="text-sm text-primary hover:underline break-all"
-                                    >
-                                        {result()!.principalUrl}
-                                    </a>
+                                    {shouldRenderPrincipalAsUrl() ? (
+                                        <a
+                                            href={result()!.principalUrl}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            class="text-sm text-primary hover:underline break-all"
+                                        >
+                                            {result()!.principalUrl}
+                                        </a>
+                                    ) : (
+                                        <p class="text-sm text-gray-600">
+                                            Conteúdo digitado (sem URL)
+                                        </p>
+                                    )}
                                 </div>
 
-                                {(result()!.linkedContent || result()!.originalContent) && (
+                                {(result()!.modifiedContent || result()!.originalContent) && (
                                     <div class="bg-white rounded-xl border border-gray-100 p-5 shadow-sm">
                                         <style>{`
                                             .inlink-highlight-original { background: #ffe3e3 !important; color: #c92a2a !important; padding: 0 3px; border-radius: 3px; font-weight: 600; display: inline-block; }
-                                            .inlink-highlight-linked { background: #d3f9d8 !important; color: #2b8a3e !important; padding: 0 3px; border-radius: 3px; font-weight: 600; display: inline-block; }
-                                            .inlink-highlight-linked a { color: #2b8a3e !important; text-decoration: underline; }
                                             .inlink-highlight-modified { background: #e7f5ff !important; color: #1c7ed6 !important; padding: 0 3px; border-radius: 3px; font-weight: 600; display: inline-block; }
                                             .inlink-highlight-modified a { color: #1c7ed6 !important; text-decoration: underline; }
                                         `}</style>
                                         <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
                                             Conteúdo com Links
                                         </p>
-                                        <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 xl:gap-6">
+                                        <div class="grid grid-cols-1 xl:grid-cols-2 gap-4 xl:gap-6">
                                             <div class="rounded-lg border border-gray-100 bg-gray-50 p-5">
                                                 <div class="flex items-center justify-between mb-2">
                                                     <p class="text-xs font-semibold text-gray-500 uppercase tracking-wider">
@@ -609,23 +721,6 @@ export function StrategistInlinks() {
                                                     </button>
                                                 </div>
                                                 <div class="prose prose-sm max-w-none text-gray-700" innerHTML={originalHtml()} />
-                                            </div>
-                                            <div class="rounded-lg border border-gray-100 bg-white p-5">
-                                                <div class="flex items-center justify-between mb-2">
-                                                    <p class="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                                                        Conteúdo com Inlinks
-                                                    </p>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() =>
-                                                            void navigator.clipboard.writeText(result()!.linkedContent)
-                                                        }
-                                                        class="text-xs font-medium text-primary hover:underline"
-                                                    >
-                                                        Copiar HTML
-                                                    </button>
-                                                </div>
-                                                <div class="prose prose-sm max-w-none text-gray-700" innerHTML={linkedHtml()} />
                                             </div>
                                             <div class="rounded-lg border border-gray-100 bg-white p-5">
                                                 <div class="flex items-center justify-between mb-2">

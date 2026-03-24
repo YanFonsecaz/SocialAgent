@@ -87,11 +87,81 @@ const toPrincipalBlocks = (
     }));
 };
 
+const STRATEGIST_SOURCE_TYPE_URL = "url";
+const STRATEGIST_SOURCE_TYPE_MANUAL = "manual";
+const MANUAL_CONTENT_MAX_CHARS = 50_000;
+
+const urlPrincipalSchema = z.url().min(1).max(255);
+const urlsAnaliseSchema = z.array(z.url().min(1).max(255)).min(1).max(100);
+
+const strategistInlinksBodySchema = z
+    .union([
+        z.object({
+            sourceType: z.literal(STRATEGIST_SOURCE_TYPE_URL),
+            urlPrincipal: urlPrincipalSchema,
+            urlsAnalise: urlsAnaliseSchema,
+        }),
+        z.object({
+            sourceType: z.literal(STRATEGIST_SOURCE_TYPE_MANUAL),
+            urlPrincipal: urlPrincipalSchema.optional(),
+            conteudoPrincipal: z
+                .string()
+                .trim()
+                .min(1)
+                .max(MANUAL_CONTENT_MAX_CHARS),
+            urlsAnalise: urlsAnaliseSchema,
+        }),
+        z.object({
+            urlPrincipal: urlPrincipalSchema,
+            urlsAnalise: urlsAnaliseSchema,
+        }),
+    ])
+    .transform((value) => {
+        if ("sourceType" in value) {
+            return value;
+        }
+
+        return {
+            sourceType: STRATEGIST_SOURCE_TYPE_URL,
+            urlPrincipal: value.urlPrincipal,
+            urlsAnalise: value.urlsAnalise,
+        } as const;
+    });
+
+type StrategistInlinksBody = z.infer<typeof strategistInlinksBodySchema>;
+
+const escapeHtml = (value: string): string =>
+    value
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+
+const manualTextToHtml = (text: string): string => {
+    const paragraphs = text
+        .split(/\n{2,}/)
+        .map((part) => part.trim())
+        .filter((part) => part.length > 0)
+        .map((part) => `<p>${escapeHtml(part).replaceAll("\n", "<br />")}</p>`);
+
+    if (paragraphs.length === 0) {
+        return "<article><p></p></article>";
+    }
+
+    return `<article>${paragraphs.join("")}</article>`;
+};
+
+const buildManualReference = (userId: string, requestId: string): string =>
+    `manual://${encodeURIComponent(userId)}/${encodeURIComponent(requestId)}`;
+
 export const strategistInlinks = new Elysia().post(
     "/strategist/inlinks",
     async ({ body, request }) => {
         const requestId = getRequestId(request);
-        const { urlPrincipal, urlsAnalise } = body;
+        const payload = body as StrategistInlinksBody;
+        const { urlsAnalise } = payload;
+        const sourceType = payload.sourceType;
         const authContext = await resolveAuthContext(request);
         if (!authContext) {
             return unauthorizedResponse();
@@ -99,35 +169,54 @@ export const strategistInlinks = new Elysia().post(
         const startedAt = Date.now();
 
         try {
+            const normalizedPrincipalUrl =
+                payload.urlPrincipal && payload.urlPrincipal.trim().length > 0
+                    ? normalizeUrl(payload.urlPrincipal)
+                    : undefined;
+            const principalReference =
+                normalizedPrincipalUrl ??
+                buildManualReference(authContext.userId, requestId);
+
             // 1) Normalize, dedupe, and block auto-link
-            const principalNormalized = normalizeUrl(urlPrincipal);
             const analysisUrlsNormalized = urlsAnalise.map(normalizeUrl);
             const analysisUrlsDeduped = Array.from(
                 new Set(analysisUrlsNormalized),
             );
-            const filteredAnalysisUrls = analysisUrlsDeduped.filter(
-                (u) => u !== principalNormalized,
+            const filteredAnalysisUrls = normalizedPrincipalUrl
+                ? analysisUrlsDeduped.filter((u) => u !== normalizedPrincipalUrl)
+                : analysisUrlsDeduped;
+
+            // 2) Resolve and persist principal content (RAG store)
+            const principalText =
+                sourceType === STRATEGIST_SOURCE_TYPE_MANUAL
+                    ? payload.conteudoPrincipal.trim()
+                    : await extractTextFromHtml(normalizedPrincipalUrl as string);
+            const principalHtml =
+                sourceType === STRATEGIST_SOURCE_TYPE_MANUAL
+                    ? manualTextToHtml(principalText)
+                    : await extractHtmlFromUrl(normalizedPrincipalUrl as string);
+            await saveCleanContent(
+                authContext.userId,
+                principalReference,
+                principalText,
             );
 
-            // 2) Extract and persist principal content (RAG store)
-            const principalText = await extractTextFromHtml(urlPrincipal);
-            await saveCleanContent(authContext.userId, urlPrincipal, principalText);
-
-            // 3) Extract principal HTML (Readability) and parse blocks (source of truth for editing)
-            const principalHtml = await extractHtmlFromUrl(urlPrincipal);
+            // 3) Parse blocks from principal source (source of truth for editing)
             const { blocks } = parseHtmlToBlocks(principalHtml);
 
             // Restrict to paragraph/list items only (per UX decision), but avoid intro:
             // - Prefer: do not insert before first H2
             // - Fallback: skip first N blocks
             const principalBlocks = toPrincipalBlocks(blocks, {
-                avoidBeforeFirstH2: true,
-                skipFirstN: 3,
+                avoidBeforeFirstH2:
+                    sourceType === STRATEGIST_SOURCE_TYPE_MANUAL ? false : true,
+                skipFirstN:
+                    sourceType === STRATEGIST_SOURCE_TYPE_MANUAL ? 0 : 3,
             });
 
             // 4) Run block-based agent graph
             const graphResult = await runStrategistInlinksBlockGraph({
-                principalUrl: urlPrincipal,
+                principalUrl: principalReference,
                 analysisUrls: filteredAnalysisUrls,
                 principalBlocks,
                 // fallback text is still provided for density computation / embeddings
@@ -152,7 +241,7 @@ export const strategistInlinks = new Elysia().post(
             // 6) Persist selected URLs (compat: keep old table shape)
             const rows = graphResult.edits.map((item) => ({
                 userId: authContext.userId,
-                principalUrl: urlPrincipal,
+                principalUrl: principalReference,
                 analysisUrl: item.targetUrl,
                 sentence: item.modifiedBlockText,
                 anchor: item.anchor,
@@ -174,7 +263,7 @@ export const strategistInlinks = new Elysia().post(
                 userId: authContext.userId,
                 tool: "strategist-inlinks",
                 model: "gpt-4o-mini",
-                prompt: JSON.stringify(body),
+                prompt: JSON.stringify(payload),
                 output: JSON.stringify({
                     totalSelecionadas: graphResult.edits.length,
                     totalPersistidas: inserted.length,
@@ -192,7 +281,8 @@ export const strategistInlinks = new Elysia().post(
             return {
                 generationId,
                 message: "Inlinks analisados com sucesso",
-                principalUrl: urlPrincipal,
+                principalUrl: principalReference,
+                principalInputMode: sourceType,
                 totalAnalise: filteredAnalysisUrls.length,
 
                 // New contract
@@ -245,9 +335,6 @@ export const strategistInlinks = new Elysia().post(
         }
     },
     {
-        body: z.object({
-            urlPrincipal: z.url().min(1).max(255),
-            urlsAnalise: z.array(z.url().min(1).max(255)).min(1).max(100),
-        }),
+        body: strategistInlinksBodySchema,
     },
 );

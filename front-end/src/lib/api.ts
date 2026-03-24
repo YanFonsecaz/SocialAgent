@@ -227,7 +227,9 @@ export async function runSocialAgent(
 // ---- Strategist Inlinks API ----
 
 export interface StrategistInlinksRequest {
-    urlPrincipal: string;
+    sourceType?: "url" | "manual";
+    urlPrincipal?: string;
+    conteudoPrincipal?: string;
     urlsAnalise: string[];
 }
 
@@ -295,6 +297,7 @@ export interface StrategistInlinksResponse {
     generationId?: string;
     message: string;
     principalUrl: string;
+    principalInputMode?: "url" | "manual";
     totalAnalise: number;
     totalSelecionadas: number;
     selecionadas: SelectedInlink[];
