@@ -1,4 +1,3 @@
-import nodemailer from "nodemailer";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError, createAuthMiddleware } from "better-auth/api";
@@ -11,6 +10,7 @@ import {
     authVerifications,
 } from "../db/schema/auth";
 import { envValid } from "../envSchema";
+import { sendEmail } from "../email/delivery";
 
 const NP_DOMAIN = "@npbrasil.com";
 
@@ -19,43 +19,8 @@ const normalizeEmail = (email: string): string => email.trim().toLowerCase();
 export const isAllowedNpEmail = (email: string): boolean =>
     normalizeEmail(email).endsWith(NP_DOMAIN);
 
-const getSmtpConfig = () => {
-    const host = envValid.SMTP_HOST;
-    const user = envValid.SMTP_USER;
-    const password = envValid.SMTP_PASSWORD;
-    const from = envValid.EMAIL_FROM;
-    const portRaw = envValid.SMTP_PORT;
-    const port = portRaw ? Number(portRaw) : 587;
-
-    if (!host || !user || !password || !from) {
-        throw new Error(
-            "Configuração SMTP incompleta para envio de magic link.",
-        );
-    }
-
-    return {
-        host,
-        user,
-        password,
-        from,
-        port: Number.isFinite(port) ? port : 587,
-    };
-};
-
 const sendMagicLinkEmail = async (email: string, url: string) => {
-    const smtp = getSmtpConfig();
-    const transporter = nodemailer.createTransport({
-        host: smtp.host,
-        port: smtp.port,
-        secure: smtp.port === 465,
-        auth: {
-            user: smtp.user,
-            pass: smtp.password,
-        },
-    });
-
-    await transporter.sendMail({
-        from: smtp.from,
+    await sendEmail({
         to: email,
         subject: "Acesso SocialAgent",
         text: `Seu link de acesso: ${url}`,

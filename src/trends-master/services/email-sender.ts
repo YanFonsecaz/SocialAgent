@@ -1,36 +1,5 @@
-import nodemailer from "nodemailer";
 import type { TrendsReport } from "../types";
-
-type SmtpConfig = {
-  host: string;
-  port: number;
-  user: string;
-  password: string;
-  from: string;
-  subject?: string;
-};
-
-function getSmtpConfig(): SmtpConfig | null {
-  const host = process.env.SMTP_HOST;
-  const port = process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : 587;
-  const user = process.env.SMTP_USER;
-  const password = process.env.SMTP_PASSWORD;
-  const from = process.env.EMAIL_FROM;
-  const subject = process.env.EMAIL_SUBJECT;
-
-  if (!host || !user || !password || !from) {
-    return null;
-  }
-
-  return {
-    host,
-    port: Number.isFinite(port) ? port : 587,
-    user,
-    password,
-    from,
-    subject,
-  };
-}
+import { sendEmail as sendTransactionalEmail } from "../../email/delivery";
 
 function normalizeRecipients(recipients: string[]): string[] {
   return recipients
@@ -203,48 +172,27 @@ export async function sendEmail(
   report: TrendsReport,
   recipients: string[],
 ): Promise<boolean> {
-  const config = getSmtpConfig();
-  if (!config) {
-    console.warn(
-      "[Email] Configuração SMTP incompleta (SMTP_HOST, SMTP_USER, SMTP_PASSWORD, EMAIL_FROM).",
-    );
-    return false;
-  }
-
   const cleanRecipients = normalizeRecipients(recipients);
   if (cleanRecipients.length === 0) {
     console.warn("[Email] Nenhum destinatário válido.");
     return false;
   }
 
-  const transporter = nodemailer.createTransport({
-    host: config.host,
-    port: config.port,
-    secure: config.port === 465,
-    auth: {
-      user: config.user,
-      pass: config.password,
-    },
-    tls: {
-      rejectUnauthorized: false,
-    },
-  });
-
-  const subject = config.subject || `Relatório de Tendências - ${report.sector}`;
+  const subject =
+    process.env.EMAIL_SUBJECT || `Relatório de Tendências - ${report.sector}`;
 
   try {
-    const info = await transporter.sendMail({
-      from: config.from,
-      to: cleanRecipients.join(", "),
+    await sendTransactionalEmail({
+      to: cleanRecipients,
       subject,
       text: report.markdown,
       html: renderMarkdownHtml(report.markdown),
     });
 
-    console.log("[Email] ✅ Email enviado via SMTP:", info.messageId);
+    console.log("[Email] ✅ Email enviado com sucesso.");
     return true;
   } catch (error) {
-    console.error("[Email] ❌ Falha ao enviar via SMTP:", error);
+    console.error("[Email] ❌ Falha ao enviar email:", error);
     return false;
   }
 }
