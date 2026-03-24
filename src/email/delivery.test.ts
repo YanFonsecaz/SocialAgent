@@ -21,6 +21,24 @@ describe("resolveEmailConfig", () => {
         });
     });
 
+    test("supports Gmail API provider", () => {
+        const config = resolveEmailConfig({
+            EMAIL_API_PROVIDER: "gmail",
+            EMAIL_FROM: "yan.fonseca@npbrasil.com",
+            GMAIL_CLIENT_ID: "client-id",
+            GMAIL_CLIENT_SECRET: "client-secret",
+            GMAIL_REFRESH_TOKEN: "refresh-token",
+        });
+
+        expect(config).toEqual({
+            mode: "gmail",
+            clientId: "client-id",
+            clientSecret: "client-secret",
+            from: "yan.fonseca@npbrasil.com",
+            refreshToken: "refresh-token",
+        });
+    });
+
     test("accepts provider-specific env vars without EMAIL_PROVIDER_API_KEY", () => {
         const config = resolveEmailConfig({
             EMAIL_API_PROVIDER: "sendgrid",
@@ -77,8 +95,18 @@ describe("resolveEmailConfig", () => {
                 EMAIL_PROVIDER_API_KEY: "key",
             }),
         ).toThrow(
-            "EMAIL_API_PROVIDER inválido: ses. Use resend, sendgrid ou postmark.",
+            "EMAIL_API_PROVIDER inválido: ses. Use gmail, resend, sendgrid ou postmark.",
         );
+    });
+
+    test("requires a complete Gmail configuration", () => {
+        expect(() =>
+            resolveEmailConfig({
+                EMAIL_API_PROVIDER: "gmail",
+                EMAIL_FROM: "yan.fonseca@npbrasil.com",
+                GMAIL_CLIENT_ID: "client-id",
+            }),
+        ).toThrow("Configuração de email Gmail incompleta.");
     });
 
     test("requires a complete email configuration", () => {

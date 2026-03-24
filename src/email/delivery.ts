@@ -1,12 +1,16 @@
 import nodemailer from "nodemailer";
 import { envValid } from "../envSchema";
 
-export type EmailProvider = "postmark" | "resend" | "sendgrid";
+export type HttpEmailProvider = "postmark" | "resend" | "sendgrid";
+export type EmailProvider = HttpEmailProvider | "gmail";
 
 export type EmailEnv = {
     EMAIL_API_PROVIDER?: string;
     EMAIL_FROM?: string;
     EMAIL_PROVIDER_API_KEY?: string;
+    GMAIL_CLIENT_ID?: string;
+    GMAIL_CLIENT_SECRET?: string;
+    GMAIL_REFRESH_TOKEN?: string;
     POSTMARK_SERVER_TOKEN?: string;
     RESEND_API_KEY?: string;
     SENDGRID_API_KEY?: string;
@@ -29,10 +33,18 @@ type ApiEmailConfig = {
     mode: "api";
     apiKey: string;
     from: string;
-    provider: EmailProvider;
+    provider: HttpEmailProvider;
 };
 
-export type EmailConfig = ApiEmailConfig | SmtpEmailConfig;
+type GmailEmailConfig = {
+    mode: "gmail";
+    clientId: string;
+    clientSecret: string;
+    from: string;
+    refreshToken: string;
+};
+
+export type EmailConfig = ApiEmailConfig | GmailEmailConfig | SmtpEmailConfig;
 
 export type SendEmailInput = {
     to: string | string[];
@@ -52,12 +64,17 @@ const normalizeProvider = (provider?: string): EmailProvider | undefined => {
         return undefined;
     }
 
-    if (value === "postmark" || value === "resend" || value === "sendgrid") {
+    if (
+        value === "gmail" ||
+        value === "postmark" ||
+        value === "resend" ||
+        value === "sendgrid"
+    ) {
         return value;
     }
 
     throw new Error(
-        `EMAIL_API_PROVIDER inválido: ${provider}. Use resend, sendgrid ou postmark.`,
+        `EMAIL_API_PROVIDER inválido: ${provider}. Use gmail, resend, sendgrid ou postmark.`,
     );
 };
 
@@ -67,7 +84,7 @@ const normalizeRecipients = (to: string | string[]): string[] =>
         .filter(Boolean);
 
 const resolveProviderApiKey = (
-    provider: EmailProvider,
+    provider: HttpEmailProvider,
     env: EmailEnv,
 ): string | undefined => {
     const genericKey = env.EMAIL_PROVIDER_API_KEY?.trim();
@@ -89,12 +106,12 @@ const resolveProviderApiKey = (
     }
 };
 
-const detectImplicitProvider = (env: EmailEnv): EmailProvider | undefined => {
+const detectImplicitProvider = (env: EmailEnv): HttpEmailProvider | undefined => {
     const providers = [
         env.RESEND_API_KEY?.trim() ? "resend" : undefined,
         env.SENDGRID_API_KEY?.trim() ? "sendgrid" : undefined,
         env.POSTMARK_SERVER_TOKEN?.trim() ? "postmark" : undefined,
-    ].filter((provider): provider is EmailProvider => Boolean(provider));
+    ].filter((provider): provider is HttpEmailProvider => Boolean(provider));
 
     if (providers.length === 0) {
         return undefined;
@@ -113,6 +130,24 @@ export const resolveEmailConfig = (env: EmailEnv = envValid): EmailConfig => {
     const provider =
         normalizeProvider(env.EMAIL_API_PROVIDER) ?? detectImplicitProvider(env);
     const from = env.EMAIL_FROM?.trim();
+
+    if (provider === "gmail") {
+        const clientId = env.GMAIL_CLIENT_ID?.trim();
+        const clientSecret = env.GMAIL_CLIENT_SECRET?.trim();
+        const refreshToken = env.GMAIL_REFRESH_TOKEN?.trim();
+
+        if (!from || !clientId || !clientSecret || !refreshToken) {
+            throw new Error("Configuração de email Gmail incompleta.");
+        }
+
+        return {
+            mode: "gmail",
+            clientId,
+            clientSecret,
+            from,
+            refreshToken,
+        };
+    }
 
     if (provider) {
         const apiKey = resolveProviderApiKey(provider, env);
@@ -290,6 +325,121 @@ const sendViaApi = async (
     }
 };
 
+const encodeBase64Url = (value: string): string =>
+    Buffer.from(value, "utf8")
+        .toString("base64")
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/g, "");
+
+const escapeMimeHeader = (value: string): string =>
+    value.replace(/\r?\n/g, " ").trim();
+
+const buildMimeMessage = (message: {
+    from: string;
+    html?: string;
+    subject: string;
+    text: string;
+    to: string[];
+}) => {
+    const boundary = `socialagent-${crypto.randomUUID()}`;
+    const headers = [
+        `From: ${escapeMimeHeader(message.from)}`,
+        `To: ${message.to.map(escapeMimeHeader).join(", ")}`,
+        `Subject: ${escapeMimeHeader(message.subject)}`,
+        "MIME-Version: 1.0",
+    ];
+
+    if (message.html) {
+        return [
+            ...headers,
+            `Content-Type: multipart/alternative; boundary="${boundary}"`,
+            "",
+            `--${boundary}`,
+            "Content-Type: text/plain; charset=UTF-8",
+            "Content-Transfer-Encoding: 8bit",
+            "",
+            message.text,
+            "",
+            `--${boundary}`,
+            "Content-Type: text/html; charset=UTF-8",
+            "Content-Transfer-Encoding: 8bit",
+            "",
+            message.html,
+            "",
+            `--${boundary}--`,
+            "",
+        ].join("\r\n");
+    }
+
+    return [
+        ...headers,
+        "Content-Type: text/plain; charset=UTF-8",
+        "Content-Transfer-Encoding: 8bit",
+        "",
+        message.text,
+        "",
+    ].join("\r\n");
+};
+
+const sendViaGmail = async (
+    config: GmailEmailConfig,
+    message: Required<Pick<SendEmailInput, "subject" | "text">> &
+        Pick<SendEmailInput, "html"> & {
+            from: string;
+            to: string[];
+        },
+) => {
+    const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+            client_id: config.clientId,
+            client_secret: config.clientSecret,
+            grant_type: "refresh_token",
+            refresh_token: config.refreshToken,
+        }),
+    });
+
+    const tokenPayload = (await tokenResponse.json()) as {
+        access_token?: string;
+        error?: string;
+        error_description?: string;
+    };
+
+    if (!tokenResponse.ok || !tokenPayload.access_token) {
+        throw new Error(
+            `[Email] Gmail token ${tokenResponse.status}: ${
+                tokenPayload.error_description ??
+                tokenPayload.error ??
+                "Falha ao obter access token."
+            }`,
+        );
+    }
+
+    const raw = encodeBase64Url(buildMimeMessage(message));
+    const sendResponse = await fetch(
+        "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+        {
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${tokenPayload.access_token}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ raw }),
+        },
+    );
+
+    if (!sendResponse.ok) {
+        const details = await sendResponse.text();
+        throw new Error(
+            `[Email] Gmail send ${sendResponse.status}: ${details.slice(0, 500)}`,
+        );
+    }
+};
+
 const sendViaSmtp = async (
     config: SmtpEmailConfig,
     message: Required<Pick<SendEmailInput, "subject" | "text">> &
@@ -343,11 +493,22 @@ export const sendEmail = async (
     };
 
     console.info(
-        `[Email] Usando transporte ${config.mode === "api" ? config.provider : "smtp"}.`,
+        `[Email] Usando transporte ${
+            config.mode === "api"
+                ? config.provider
+                : config.mode === "gmail"
+                  ? "gmail"
+                  : "smtp"
+        }.`,
     );
 
     if (config.mode === "api") {
         await sendViaApi(config, message);
+        return;
+    }
+
+    if (config.mode === "gmail") {
+        await sendViaGmail(config, message);
         return;
     }
 

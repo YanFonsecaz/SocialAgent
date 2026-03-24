@@ -78,6 +78,7 @@ Para rodar backend e frontend localmente, você precisa definir:
 - Email transacional:
   - SMTP: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM`
   - API HTTP: `EMAIL_API_PROVIDER` + `EMAIL_PROVIDER_API_KEY` + `EMAIL_FROM`
+  - Gmail API: `EMAIL_API_PROVIDER=gmail` + `GMAIL_CLIENT_ID` + `GMAIL_CLIENT_SECRET` + `GMAIL_REFRESH_TOKEN` + `EMAIL_FROM`
   - Alternativas aceitas por provider: `RESEND_API_KEY`, `SENDGRID_API_KEY`, `POSTMARK_SERVER_TOKEN`
 
 ### Exemplo (macOS / Linux)
@@ -110,6 +111,7 @@ Para o login por magic link, o backend precisa conseguir entregar e-mail. O proj
 
 - SMTP tradicional
 - API HTTP (`resend`, `sendgrid` ou `postmark`)
+- Gmail API (`gmail`)
 
 Exemplo com API HTTP:
 
@@ -120,6 +122,16 @@ export RESEND_API_KEY="SUA_CHAVE"
 ```
 
 Se você usar `EMAIL_PROVIDER_API_KEY`, ele substitui a chave específica do provider.
+
+Exemplo com Gmail API:
+
+```bash
+export EMAIL_API_PROVIDER="gmail"
+export EMAIL_FROM="yan.fonseca@npbrasil.com"
+export GMAIL_CLIENT_ID="SEU_CLIENT_ID"
+export GMAIL_CLIENT_SECRET="SEU_CLIENT_SECRET"
+export GMAIL_REFRESH_TOKEN="SEU_REFRESH_TOKEN"
+```
 
 ## Rodar o backend (API) em desenvolvimento
 
