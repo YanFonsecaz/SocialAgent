@@ -7,8 +7,8 @@ COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 
 # Install frontend deps
-COPY front-end/package.json front-end/package-lock.json front-end/bun.lock ./front-end/
-RUN bun install --cwd front-end
+COPY front-end/package.json front-end/bun.lock ./front-end/
+RUN bun install --cwd front-end --frozen-lockfile
 
 # Copy the rest of the repo
 COPY . .

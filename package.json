@@ -8,7 +8,7 @@
         "build": "bun build src/http/server.ts --target bun --outdir ./dist",
         "build:front": "bun run --cwd front-end build",
         "build:all": "bun run build:front && bun run build",
-        "start": "NODE_ENV=production bun dist/http/server.ts",
+        "start": "NODE_ENV=production bun dist/server.js",
         "start:prod": "bun run build:all && bun run start",
         "db:generate": "drizzle-kit generate",
         "db:migrate": "drizzle-kit migrate",
