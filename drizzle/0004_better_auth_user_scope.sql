@@ -119,15 +119,30 @@ ALTER TABLE "strategist_inlinks" ADD COLUMN IF NOT EXISTS "user_id" text;
 ALTER TABLE "trends_config" ADD COLUMN IF NOT EXISTS "user_id" text;
 --> statement-breakpoint
 UPDATE "store_content"
-SET "user_id" = 'bootstrap-yan-fonseca-npbrasil-com'
+SET "user_id" = (
+	SELECT "id"
+	FROM "user"
+	WHERE "email" = 'yan.fonseca@npbrasil.com'
+	LIMIT 1
+)
 WHERE "user_id" IS NULL;
 --> statement-breakpoint
 UPDATE "strategist_inlinks"
-SET "user_id" = 'bootstrap-yan-fonseca-npbrasil-com'
+SET "user_id" = (
+	SELECT "id"
+	FROM "user"
+	WHERE "email" = 'yan.fonseca@npbrasil.com'
+	LIMIT 1
+)
 WHERE "user_id" IS NULL;
 --> statement-breakpoint
 UPDATE "trends_config"
-SET "user_id" = 'bootstrap-yan-fonseca-npbrasil-com'
+SET "user_id" = (
+	SELECT "id"
+	FROM "user"
+	WHERE "email" = 'yan.fonseca@npbrasil.com'
+	LIMIT 1
+)
 WHERE "user_id" IS NULL;
 --> statement-breakpoint
 DO $$

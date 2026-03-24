@@ -1,4 +1,5 @@
-CREATE TABLE "trends_config" (
+-- Allow Drizzle to bootstrap migration tracking on existing databases.
+CREATE TABLE IF NOT EXISTS "trends_config" (
 	"id" text PRIMARY KEY NOT NULL,
 	"sector" text NOT NULL,
 	"periods" jsonb NOT NULL,
