@@ -15,11 +15,12 @@ COPY . .
 
 # Build frontend + backend bundle
 RUN bun run build:all
+RUN chmod +x scripts/start-with-migrations.sh
 
 ENV NODE_ENV=production
 ENV PORT=3333
 
 EXPOSE 3333
 
-# Bun build outputs dist/server.js (entry point)
-CMD ["bun", "dist/server.js"]
+# Ensure schema is current before the web process starts.
+CMD ["./scripts/start-with-migrations.sh"]
