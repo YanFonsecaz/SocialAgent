@@ -14,6 +14,9 @@ const envSchema = z.object({
   EMAIL_SUBJECT: z.string().min(1).optional(),
   EMAIL_PROVIDER_API_KEY: z.string().min(1).optional(),
   EMAIL_API_PROVIDER: z.string().min(1).optional(),
+  RESEND_API_KEY: z.string().min(1).optional(),
+  SENDGRID_API_KEY: z.string().min(1).optional(),
+  POSTMARK_SERVER_TOKEN: z.string().min(1).optional(),
 });
 
 export const envValid = envSchema.parse(process.env);

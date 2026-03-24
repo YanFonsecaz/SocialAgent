@@ -25,7 +25,11 @@ export function LoginPage() {
             setSuccess("Se o e-mail for válido, você receberá um link de acesso.");
         } catch (err) {
             console.error(err);
-            setError("Não foi possível enviar o link. Tente novamente.");
+            setError(
+                err instanceof Error && err.message.trim().length > 0
+                    ? err.message
+                    : "Não foi possível enviar o link. Tente novamente.",
+            );
         } finally {
             setLoading(false);
         }

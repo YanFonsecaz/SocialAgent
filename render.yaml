@@ -51,6 +51,12 @@ services:
         sync: false
       - key: EMAIL_API_PROVIDER
         sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: SENDGRID_API_KEY
+        sync: false
+      - key: POSTMARK_SERVER_TOKEN
+        sync: false
   - type: cron
     name: socialagent-retention-cleanup
     env: docker

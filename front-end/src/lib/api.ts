@@ -103,7 +103,7 @@ export async function requestMagicLink(
     });
 
     if (!response.ok) {
-        throw new Error(`Error: ${response.statusText}`);
+        throw new Error(await parseApiError(response));
     }
 
     return response.json();
@@ -120,7 +120,7 @@ export async function verifyMagicLink(
     });
 
     if (!response.ok) {
-        throw new Error(`Error: ${response.statusText}`);
+        throw new Error(await parseApiError(response));
     }
 
     return response.json();
@@ -132,7 +132,7 @@ export async function getAuthSession(): Promise<AuthSessionResponse> {
     });
 
     if (!response.ok) {
-        throw new Error(`Error: ${response.statusText}`);
+        throw new Error(await parseApiError(response));
     }
 
     return response.json();
@@ -145,7 +145,7 @@ export async function logout(): Promise<{ success: boolean }> {
     });
 
     if (!response.ok) {
-        throw new Error(`Error: ${response.statusText}`);
+        throw new Error(await parseApiError(response));
     }
 
     return response.json();
@@ -164,7 +164,7 @@ export async function listLlmGenerations(
 
     const response = await apiFetch(`/llm/generations?${search.toString()}`);
     if (!response.ok) {
-        throw new Error(`Error: ${response.statusText}`);
+        throw new Error(await parseApiError(response));
     }
 
     return response.json();
@@ -182,7 +182,7 @@ export async function approveLlmGeneration(
     });
 
     if (!response.ok) {
-        throw new Error(`Error: ${response.statusText}`);
+        throw new Error(await parseApiError(response));
     }
 
     return response.json();
@@ -218,7 +218,7 @@ export async function runSocialAgent(
     });
 
     if (!response.ok) {
-        throw new Error(`Error: ${response.statusText}`);
+        throw new Error(await parseApiError(response));
     }
 
     return response.json();
@@ -331,7 +331,7 @@ export async function runStrategistInlinks(
     });
 
     if (!response.ok) {
-        throw new Error(`Error: ${response.statusText}`);
+        throw new Error(await parseApiError(response));
     }
 
     return response.json();
@@ -427,7 +427,7 @@ export async function fetchContentReviewerTemplate(): Promise<string> {
     const response = await apiFetch(`/strategist/content-reviewer/template`);
 
     if (!response.ok) {
-        throw new Error(`Error: ${response.statusText}`);
+        throw new Error(await parseApiError(response));
     }
 
     return response.text();

@@ -14,6 +14,40 @@ const jsonHeaders = {
 const MAGIC_LINK_WINDOW_MS = 15 * 60 * 1000;
 const MAGIC_LINK_MAX_PER_IP = 20;
 const MAGIC_LINK_MAX_PER_EMAIL = 5;
+const EMAIL_DELIVERY_ERROR_CODES = new Set([
+    "EAUTH",
+    "ECONNECTION",
+    "ECONNREFUSED",
+    "ESOCKET",
+    "ETIMEDOUT",
+]);
+
+const isEmailDeliveryFailure = (error: unknown): boolean => {
+    if (!error || typeof error !== "object") {
+        return false;
+    }
+
+    const candidate = error as { code?: unknown; message?: unknown };
+    const code =
+        typeof candidate.code === "string"
+            ? candidate.code.trim().toUpperCase()
+            : "";
+    if (EMAIL_DELIVERY_ERROR_CODES.has(code)) {
+        return true;
+    }
+
+    const message =
+        typeof candidate.message === "string"
+            ? candidate.message.toLowerCase()
+            : "";
+
+    return (
+        message.includes("configuração de email") ||
+        message.includes("connection timeout") ||
+        message.includes("timed out") ||
+        message.includes("[email]")
+    );
+};
 
 const resolveClientIp = (request: Request): string => {
     const forwardedFor = request.headers.get("x-forwarded-for");
@@ -114,6 +148,17 @@ export const authRoutes = new Elysia()
                 });
             } catch (error) {
                 console.error("[Auth] Falha ao solicitar magic link:", error);
+                if (isEmailDeliveryFailure(error)) {
+                    return createApiErrorResponse({
+                        status: 503,
+                        code: "EMAIL_DELIVERY_FAILED",
+                        message:
+                            "O servico de e-mail esta indisponivel no momento. Tente novamente mais tarde.",
+                        requestId,
+                        details: error,
+                    });
+                }
+
                 return createApiErrorResponse({
                     status: 500,
                     code: "AUTH_REQUEST_FAILED",

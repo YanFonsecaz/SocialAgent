@@ -75,6 +75,10 @@ Para rodar backend e frontend localmente, você precisa definir:
 - `APP_BASE_URL` (ex.: `http://localhost:3333`)
 - `BETTER_AUTH_SECRET` (segredo da sessão/auth)
 - `CORS_ORIGIN` (opcional; default no servidor permite `http://localhost:5173`)
+- Email transacional:
+  - SMTP: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM`
+  - API HTTP: `EMAIL_API_PROVIDER` + `EMAIL_PROVIDER_API_KEY` + `EMAIL_FROM`
+  - Alternativas aceitas por provider: `RESEND_API_KEY`, `SENDGRID_API_KEY`, `POSTMARK_SERVER_TOKEN`
 
 ### Exemplo (macOS / Linux)
 
@@ -99,6 +103,23 @@ $env:APP_BASE_URL="http://localhost:3333"
 $env:BETTER_AUTH_SECRET="SEU_SEGREDO_FORTE"
 $env:CORS_ORIGIN="http://localhost:5173"
 ```
+
+### Magic link por e-mail em produção
+
+Para o login por magic link, o backend precisa conseguir entregar e-mail. O projeto aceita dois modos:
+
+- SMTP tradicional
+- API HTTP (`resend`, `sendgrid` ou `postmark`)
+
+Exemplo com API HTTP:
+
+```bash
+export EMAIL_FROM="no-reply@seudominio.com"
+export EMAIL_API_PROVIDER="resend"
+export RESEND_API_KEY="SUA_CHAVE"
+```
+
+Se você usar `EMAIL_PROVIDER_API_KEY`, ele substitui a chave específica do provider.
 
 ## Rodar o backend (API) em desenvolvimento
 

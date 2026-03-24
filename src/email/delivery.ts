@@ -7,6 +7,9 @@ export type EmailEnv = {
     EMAIL_API_PROVIDER?: string;
     EMAIL_FROM?: string;
     EMAIL_PROVIDER_API_KEY?: string;
+    POSTMARK_SERVER_TOKEN?: string;
+    RESEND_API_KEY?: string;
+    SENDGRID_API_KEY?: string;
     SMTP_HOST?: string;
     SMTP_PASSWORD?: string;
     SMTP_PORT?: string;
@@ -63,12 +66,56 @@ const normalizeRecipients = (to: string | string[]): string[] =>
         .map((recipient) => recipient.trim())
         .filter(Boolean);
 
+const resolveProviderApiKey = (
+    provider: EmailProvider,
+    env: EmailEnv,
+): string | undefined => {
+    const genericKey = env.EMAIL_PROVIDER_API_KEY?.trim();
+    if (genericKey) {
+        return genericKey;
+    }
+
+    switch (provider) {
+        case "resend":
+            return env.RESEND_API_KEY?.trim();
+        case "sendgrid":
+            return env.SENDGRID_API_KEY?.trim();
+        case "postmark":
+            return env.POSTMARK_SERVER_TOKEN?.trim();
+        default: {
+            const neverProvider: never = provider;
+            throw new Error(`Provider de email não suportado: ${neverProvider}`);
+        }
+    }
+};
+
+const detectImplicitProvider = (env: EmailEnv): EmailProvider | undefined => {
+    const providers = [
+        env.RESEND_API_KEY?.trim() ? "resend" : undefined,
+        env.SENDGRID_API_KEY?.trim() ? "sendgrid" : undefined,
+        env.POSTMARK_SERVER_TOKEN?.trim() ? "postmark" : undefined,
+    ].filter((provider): provider is EmailProvider => Boolean(provider));
+
+    if (providers.length === 0) {
+        return undefined;
+    }
+
+    if (providers.length > 1) {
+        throw new Error(
+            "Múltiplos providers de email configurados. Defina EMAIL_API_PROVIDER explicitamente.",
+        );
+    }
+
+    return providers[0];
+};
+
 export const resolveEmailConfig = (env: EmailEnv = envValid): EmailConfig => {
-    const provider = normalizeProvider(env.EMAIL_API_PROVIDER);
+    const provider =
+        normalizeProvider(env.EMAIL_API_PROVIDER) ?? detectImplicitProvider(env);
     const from = env.EMAIL_FROM?.trim();
 
     if (provider) {
-        const apiKey = env.EMAIL_PROVIDER_API_KEY?.trim();
+        const apiKey = resolveProviderApiKey(provider, env);
         if (!from || !apiKey) {
             throw new Error(
                 `Configuração de email por API incompleta para ${provider}.`,

@@ -21,6 +21,35 @@ describe("resolveEmailConfig", () => {
         });
     });
 
+    test("accepts provider-specific env vars without EMAIL_PROVIDER_API_KEY", () => {
+        const config = resolveEmailConfig({
+            EMAIL_API_PROVIDER: "sendgrid",
+            EMAIL_FROM: "no-reply@example.com",
+            SENDGRID_API_KEY: "sg_test_123",
+        });
+
+        expect(config).toEqual({
+            mode: "api",
+            provider: "sendgrid",
+            apiKey: "sg_test_123",
+            from: "no-reply@example.com",
+        });
+    });
+
+    test("auto-detects provider from a single provider-specific key", () => {
+        const config = resolveEmailConfig({
+            EMAIL_FROM: "no-reply@example.com",
+            RESEND_API_KEY: "re_test_123",
+        });
+
+        expect(config).toEqual({
+            mode: "api",
+            provider: "resend",
+            apiKey: "re_test_123",
+            from: "no-reply@example.com",
+        });
+    });
+
     test("falls back to SMTP when API provider is absent", () => {
         const config = resolveEmailConfig({
             EMAIL_FROM: "no-reply@example.com",
@@ -60,6 +89,18 @@ describe("resolveEmailConfig", () => {
             }),
         ).toThrow(
             "Configuração de email incompleta. Defina um provider por API ou SMTP.",
+        );
+    });
+
+    test("requires explicit provider when multiple provider-specific keys are set", () => {
+        expect(() =>
+            resolveEmailConfig({
+                EMAIL_FROM: "no-reply@example.com",
+                RESEND_API_KEY: "re_test_123",
+                SENDGRID_API_KEY: "sg_test_123",
+            }),
+        ).toThrow(
+            "Múltiplos providers de email configurados. Defina EMAIL_API_PROVIDER explicitamente.",
         );
     });
 });
