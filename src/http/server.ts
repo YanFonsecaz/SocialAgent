@@ -154,6 +154,7 @@ const app = new Elysia()
     .use(contentReviewerRoutes)
     .use(trendsMasterRoutes)
     .use(llmGenerationRoutes)
+    .get("/health", () => ({ ok: true }))
     .get("/health/db", async () => {
         try {
             await db.execute(sql`select 1`);
@@ -182,8 +183,19 @@ const app = new Elysia()
     })
     .get("/*", () => indexHtml);
 
-const port = Number(Bun.env.PORT ?? 3333);
+const resolvePort = (): number => {
+    const rawPort = Bun.env.PORT?.trim();
+    if (!rawPort) {
+        return 3333;
+    }
 
-app.listen(port, () => {
-    console.log(`Server started on http://localhost:${port}`);
+    const port = Number(rawPort);
+    return Number.isInteger(port) && port > 0 ? port : 3333;
+};
+
+const port = resolvePort();
+const hostname = Bun.env.HOST?.trim() || "0.0.0.0";
+
+app.listen({ port, hostname }, (server) => {
+    console.log(`Server started on http://${server.hostname}:${server.port}`);
 });

@@ -7,13 +7,15 @@ services:
     dockerfilePath: ./Dockerfile
     dockerContext: .
     autoDeploy: true
-    healthCheckPath: /
+    healthCheckPath: /health
     envVars:
       - key: NODE_ENV
         value: production
       - key: PORT
         value: "3333"
 
+      # `.env` files are ignored by Git and excluded from Docker builds.
+      # Configure these directly in Render before deploying.
       # Database (set this in Render to your Render Postgres Internal URL)
       - key: DATABASE_URL
         sync: false
