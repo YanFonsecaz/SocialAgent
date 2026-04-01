@@ -13,6 +13,8 @@ services:
         value: production
       - key: PORT
         value: "3333"
+      - key: RUN_MIGRATIONS
+        value: "false"
 
       # `.env` files are ignored by Git and excluded from Docker builds.
       # Configure these directly in Render before deploying.
